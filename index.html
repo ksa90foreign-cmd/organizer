@@ -1477,8 +1477,9 @@ document.addEventListener('submit', e => {
     const title = $('#fTitle').value.trim(); if (!title) return;
     const ex = getRec(f.dataset.id); if (!ex) { closeSheet(); return; }
     const g = $('#fGroup');
+    const patch = { title, details: $('#fDetails').value.trim(), group: g ? g.value : ex.group, focus: $('#fFocus').checked };
     closeSheet();
-    setRec(Object.assign({}, ex, { title, details: $('#fDetails').value.trim(), group: g ? g.value : ex.group, focus: $('#fFocus').checked }));
+    setRec(Object.assign({}, ex, patch));
     return;
   }
 
