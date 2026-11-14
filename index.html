@@ -995,6 +995,8 @@ async function recognize(file, onProgress) {
     }
   });
   try {
+    // режим «разрозненный текст»: плитки в две колонки не склеиваются в одну строку
+    await worker.setParameters({ tessedit_pageseg_mode: '11' });
     const canvas = await prepareImage(file);
     onProgress('Распознаю текст', 0.5);
     const { data } = await worker.recognize(canvas);
@@ -1018,7 +1020,7 @@ function lev(a, b) {
   }
   return prev[n];
 }
-const CUR_MARK = /(руб|р\.|₽|\$|€|eur|usd|rub|ру6|py6|pуб)\.?\s*$/i;
+const CUR_MARK = /((руб|р\.|₽|\$|€|£|eur|usd|rub|ру6|py6|pуб)\.?|\d\s*[рpP<])\s*$/i;
 /* Сумма в конце строки: «85 000,00 руб», «20] 10 000,00 руб», «2 700.000 €» */
 function amountAtEnd(line) {
   const m = String(line).replace(/[−–]/g, '-').match(/(-?(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d{1,3})?)\s*[^\d\s]{0,5}\.?\s*$/);
@@ -1046,20 +1048,51 @@ function matchScan(text) {
     }));
     return best;
   });
+  // строки-суммы: есть знак валюты или строка почти целиком из цифр
+  const isAmountLine = l => {
+    if (amountAtEnd(l) === null) return false;
+    if (CUR_MARK.test(l)) return true;
+    const t = l.replace(/\s/g, '');
+    return t.length > 0 && (t.match(/\d/g) || []).length / t.length >= 0.6;
+  };
   const result = new Map();
+  const taken = new Set();
+  const assign = (a, v) => { if (!result.has(a.id)) result.set(a.id, v); };
+  // 1. сумма в той же строке, что и название
   lines.forEach((line, i) => {
     const hit = lineAcc[i];
-    if (!hit || result.has(hit.a.id)) return;
-    let amount = null;
-    if (CUR_MARK.test(line)) amount = amountAtEnd(line);
-    const usable = j => j >= 0 && j < lines.length && !lineAcc[j];
-    for (let k = 1; amount === null && k <= 2; k++) {
-      if (!usable(i + k)) break;
-      amount = amountAtEnd(lines[i + k]);
+    if (hit && CUR_MARK.test(line) && normOcr(line).length > hit.len + 2) {
+      const v = amountAtEnd(line);
+      if (v !== null) { assign(hit.a, v); taken.add(i); }
     }
-    if (amount === null && usable(i - 1) && CUR_MARK.test(lines[i - 1])) amount = amountAtEnd(lines[i - 1]);
-    if (amount !== null) result.set(hit.a.id, amount);
   });
+  // 2. серия названий подряд, затем суммы в том же порядке (список и плитки в две колонки)
+  let i = 0;
+  while (i < lines.length) {
+    if (!lineAcc[i] || taken.has(i)) { i++; continue; }
+    const run = [];
+    let j = i;
+    while (j < lines.length && run.length < 4) {
+      if (lineAcc[j] && !taken.has(j)) { if (!result.has(lineAcc[j].a.id)) run.push(lineAcc[j].a); j++; continue; }
+      // между названиями допускаем одну «мусорную» строку (иконки)
+      if (j + 1 < lines.length && lineAcc[j + 1] && !taken.has(j + 1) && !isAmountLine(lines[j])) { j++; continue; }
+      break;
+    }
+    const amounts = [];
+    let k = j, skipped = 0;
+    while (k < lines.length && amounts.length < run.length && skipped <= 2) {
+      if (lineAcc[k]) break;
+      if (isAmountLine(lines[k])) { amounts.push(amountAtEnd(lines[k])); taken.add(k); }
+      else skipped++;
+      k++;
+    }
+    run.forEach((a, n) => { if (n < amounts.length) assign(a, amounts[n]); });
+    // 3. если ниже ничего — сумма строкой выше (банки, где сумма над названием)
+    if (!amounts.length && run.length === 1 && i > 0 && !lineAcc[i - 1] && !taken.has(i - 1) && CUR_MARK.test(lines[i - 1])) {
+      assign(run[0], amountAtEnd(lines[i - 1])); taken.add(i - 1);
+    }
+    i = Math.max(j, i + 1);
+  }
   return accs.map(a => ({ a, amount: result.has(a.id) ? result.get(a.id) : null }));
 }
 
