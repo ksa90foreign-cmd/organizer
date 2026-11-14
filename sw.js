@@ -1,6 +1,6 @@
 /* Органайзер — service worker: работа без интернета.
    При обновлении index.html увеличьте номер версии ниже. */
-const VERSION = 'organizer-v8';
+const VERSION = 'organizer-v9';
 const SHELL = [
   './',
   'index.html',
@@ -20,7 +20,7 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== VERSION && !/-ocr$/.test(k)).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -52,6 +52,19 @@ self.addEventListener('fetch', event => {
         .catch(() => caches.match('index.html')
           .then(r => r || caches.match('./'))
           .then(r => r || network))
+    );
+    return;
+  }
+
+  // Модуль распознавания (большие файлы, не меняются): только из кэша, если уже скачан
+  if (url.origin === self.location.origin && url.pathname.indexOf('/lib/ocr/') >= 0) {
+    event.respondWith(
+      caches.open('organizer-ocr').then(cache =>
+        cache.match(req).then(cached => cached || fetch(req).then(res => {
+          if (res && res.ok) cache.put(req, res.clone());
+          return res;
+        }))
+      )
     );
     return;
   }

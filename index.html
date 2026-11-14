@@ -187,6 +187,17 @@ a{color:var(--accent)}
 .money-toggle svg{width:16px;height:16px;transition:transform .2s ease}
 .money-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
 .money-detail{padding-top:4px}
+.scan-row,.form label.scan-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);color:var(--ink);font-size:15px;cursor:pointer}
+.scan-row:last-child{border-bottom:0}
+.scan-row input{width:18px;height:18px;accent-color:var(--accent);flex:0 0 auto}
+.scan-row .nm{flex:1;min-width:0;overflow-wrap:anywhere}
+.scan-row .ch{white-space:nowrap;text-align:right;font-size:14px}
+.scan-row .ch s{color:var(--faint);margin-right:6px}
+.scan-row.same,.form label.scan-row.same{color:var(--muted);cursor:default}
+.progress-line{height:4px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin:12px 0 6px}
+.progress-line i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s ease}
+details.raw summary{cursor:pointer;font-size:13px;color:var(--muted)}
+details.raw pre{white-space:pre-wrap;font-size:12px;font-family:var(--font-num);background:var(--surface-2);padding:8px;border-radius:8px;max-height:220px;overflow:auto}
 .money-detail .sub{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--muted)}
 .money-detail .hint{margin:4px 0 6px}
 .total .big{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
@@ -277,7 +288,11 @@ select.inp{appearance:auto}
     <section class="panel money" aria-labelledby="moneyH">
       <div class="sec-h">
         <h2 id="moneyH">Деньги</h2>
-        <button type="button" class="plus-btn" data-action="new-account" aria-label="Добавить счёт" title="Добавить счёт"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <div class="r">
+          <button type="button" class="plus-btn" data-action="scan" aria-label="Обновить суммы со скриншота" title="Обновить суммы со скриншота"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M8 12h8"/></svg></button>
+          <button type="button" class="plus-btn" data-action="new-account" aria-label="Добавить счёт" title="Добавить счёт"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          <input type="file" id="scanFile" accept="image/*" hidden>
+        </div>
       </div>
       <div id="totals"></div>
       <div id="accounts"></div>
@@ -916,6 +931,196 @@ function renderMoney() {
   $('#accounts').innerHTML = '<div class="money-detail">' + (big && sub ? '<div class="sub">' + sub + '</div>' : '') + (big ? hint : '') + rows + '</div>';
 }
 
+/* ================= Суммы со скриншота ================= */
+const OCR_BASE = () => new URL('lib/ocr/', location.href).href;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'lib/ocr/tesseract.min.js';
+    s.onload = () => (window.Tesseract ? resolve(window.Tesseract) : reject(new Error('ocr')));
+    s.onerror = () => reject(new Error('ocr'));
+    document.head.appendChild(s);
+  });
+}
+/* Готовим картинку: оттенки серого, тёмную тему переворачиваем в светлую */
+function prepareImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        // скриншоты распознаются лучше всего в исходном размере; маленькие картинки увеличиваем, огромные уменьшаем
+        const big = Math.max(img.naturalWidth, img.naturalHeight);
+        const k = img.naturalWidth < 900 ? 2 : big > 4200 ? 4200 / big : 1;
+        const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, w, h);
+        const d = ctx.getImageData(0, 0, w, h);
+        const px = d.data;
+        let sum = 0;
+        for (let i = 0; i < px.length; i += 4) sum += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+        const dark = sum / (px.length / 4) < 128;
+        for (let i = 0; i < px.length; i += 4) {
+          let g = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+          if (dark) g = 255 - g;
+          px[i] = px[i + 1] = px[i + 2] = g;
+        }
+        ctx.putImageData(d, 0, 0);
+        URL.revokeObjectURL(url);
+        resolve(c);
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('img')); };
+    img.src = url;
+  });
+}
+async function recognize(file, onProgress) {
+  const T = await loadTesseract();
+  const base = OCR_BASE();
+  const worker = await T.createWorker('rus+eng', 1, {
+    workerPath: base + 'worker.min.js',
+    corePath: base + 'core',
+    langPath: base + 'lang',
+    gzip: true,
+    logger: m => {
+      if (!m || typeof m.progress !== 'number') return;
+      const stage = /recogniz/.test(m.status) ? 'Распознаю текст' : /language|traineddata/.test(m.status) ? 'Загружаю модуль распознавания' : 'Готовлю распознавание';
+      const p = /recogniz/.test(m.status) ? 0.5 + m.progress * 0.5 : m.progress * 0.5;
+      onProgress(stage, p);
+    }
+  });
+  try {
+    const canvas = await prepareImage(file);
+    onProgress('Распознаю текст', 0.5);
+    const { data } = await worker.recognize(canvas);
+    return data.text || '';
+  } finally {
+    worker.terminate();
+  }
+}
+
+/* Сопоставление: латинские и кириллические «двойники» считаем одной буквой */
+const LAT2CYR = { a: 'а', c: 'с', e: 'е', h: 'н', k: 'к', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у' };
+const normOcr = s => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[a-z]/g, ch => LAT2CYR[ch] || ch).replace(/[^a-zа-я0-9%]/g, '');
+function lev(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  const m = a.length, n = b.length;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+const CUR_MARK = /(руб|р\.|₽|\$|€|eur|usd|rub|ру6|py6|pуб)\.?\s*$/i;
+/* Сумма в конце строки: «85 000,00 руб», «20] 10 000,00 руб», «2 700.000 €» */
+function amountAtEnd(line) {
+  const m = String(line).replace(/[−–]/g, '-').match(/(-?(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d{1,3})?)\s*[^\d\s]{0,5}\.?\s*$/);
+  if (!m) return null;
+  let s = m[1].replace(/[ \u00a0\u202f]/g, '').replace(',', '.');
+  const v = parseFloat(s);
+  return isFinite(v) ? Math.round(v * 100) / 100 : null;
+}
+function matchScan(text) {
+  const lines = String(text).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const accs = accounts();
+  const names = accs.map(a => ({ a, keys: [a.name].concat(a.aliases || []).map(normOcr).filter(k => k.length >= 2) }));
+  // для каждой строки — лучший счёт
+  const lineAcc = lines.map(line => {
+    const nl = normOcr(line.replace(/[.…]+\s*$/, ''));
+    if (nl.length < 2) return null;
+    let best = null;
+    names.forEach(({ a, keys }) => keys.forEach(k => {
+      let score = 0;
+      if (nl === k) score = 4;
+      else if (k.length >= 3 && nl.indexOf(k) >= 0) score = 3;
+      else if (nl.length >= 6 && k.indexOf(nl) === 0) score = 2;
+      else if (k.length >= 5 && lev(nl, k) <= (k.length >= 10 ? 2 : 1)) score = 1;
+      if (score && (!best || score > best.score || (score === best.score && k.length > best.len))) best = { a, score, len: k.length };
+    }));
+    return best;
+  });
+  const result = new Map();
+  lines.forEach((line, i) => {
+    const hit = lineAcc[i];
+    if (!hit || result.has(hit.a.id)) return;
+    let amount = null;
+    if (CUR_MARK.test(line)) amount = amountAtEnd(line);
+    const usable = j => j >= 0 && j < lines.length && !lineAcc[j];
+    for (let k = 1; amount === null && k <= 2; k++) {
+      if (!usable(i + k)) break;
+      amount = amountAtEnd(lines[i + k]);
+    }
+    if (amount === null && usable(i - 1) && CUR_MARK.test(lines[i - 1])) amount = amountAtEnd(lines[i - 1]);
+    if (amount !== null) result.set(hit.a.id, amount);
+  });
+  return accs.map(a => ({ a, amount: result.has(a.id) ? result.get(a.id) : null }));
+}
+
+let scanLast = null;
+function scanSheet(state, data) {
+  if (state === 'progress') {
+    openSheet('scan',
+      '<h2>Обновить со скриншота</h2>' +
+      '<p class="hint" id="scanStage">' + esc(data || 'Готовлю распознавание') + '…</p>' +
+      '<div class="progress-line"><i id="scanBar"></i></div>' +
+      '<p class="hint">Первый раз загружается модуль распознавания, это 10–20 секунд. Потом быстрее.</p>');
+    return;
+  }
+  if (state === 'error') {
+    openSheet('scan', '<h2>Обновить со скриншота</h2><p class="hint">' + esc(data) + '</p><div class="actions"><div class="r"><button type="button" class="btn" data-action="close-sheet">Закрыть</button></div></div>');
+    return;
+  }
+  const rows = data.rows;
+  const found = rows.filter(r => r.amount !== null);
+  const changed = found.filter(r => Number(r.a.amount) !== r.amount);
+  const missing = rows.filter(r => r.amount === null);
+  openSheet('scan',
+    '<h2>Обновить со скриншота</h2>' +
+    (found.length
+      ? '<form class="form" id="fScan">' +
+          '<div>' + found.map(r => {
+            const old = Number(r.a.amount) || 0;
+            const same = old === r.amount;
+            // сумма изменилась в разы — скорее всего, ошибка распознавания: не отмечаем, просим проверить
+            const odd = !same && old !== 0 && (Math.abs(r.amount) / Math.abs(old) >= 5 || Math.abs(r.amount) / Math.abs(old) <= 0.2);
+            return '<label class="scan-row' + (same ? ' same' : '') + '"><input type="checkbox" name="acc" value="' + esc(r.a.id) + '" data-amount="' + r.amount + '"' + (same ? ' disabled' : odd ? '' : ' checked') + '>' +
+              '<span class="nm">' + esc(r.a.name) + (odd ? '<span class="hint" style="display:block;color:var(--danger)">проверьте сумму</span>' : '') + '</span>' +
+              '<span class="ch num">' + (same ? 'без изменений' : '<s>' + fmtMoney(Number(r.a.amount) || 0, r.a.cur) + '</s>' + fmtMoney(r.amount, r.a.cur)) + '</span></label>';
+          }).join('') + '</div>' +
+          (missing.length ? '<p class="hint">Не найдены на снимке: ' + missing.map(r => esc(r.a.name)).join(', ') + '.</p>' : '') +
+          '<details class="raw"><summary>Распознанный текст</summary><pre>' + esc(data.text) + '</pre></details>' +
+          '<div class="actions"><div class="r"><button type="button" class="btn" data-action="close-sheet">Отмена</button>' +
+          '<button type="submit" class="btn primary"' + (changed.length ? '' : ' disabled') + '>' + (changed.length ? 'Применить' : 'Нечего менять') + '</button></div></div>' +
+        '</form>'
+      : '<p class="hint">На снимке не нашлось названий ваших счетов. Если в банке счёт подписан иначе, откройте счёт в органайзере и впишите это название в поле «Как называется на скриншотах».</p>' +
+        '<details class="raw"><summary>Распознанный текст</summary><pre>' + esc(data.text) + '</pre></details>' +
+        '<div class="actions"><div class="r"><button type="button" class="btn" data-action="close-sheet">Закрыть</button></div></div>'));
+}
+async function runScan(file) {
+  if (!accounts().length) { toast('Сначала добавьте счета'); return; }
+  scanSheet('progress');
+  try {
+    const text = await recognize(file, (stage, p) => {
+      const st = document.getElementById('scanStage'), bar = document.getElementById('scanBar');
+      if (st) st.textContent = stage + '…';
+      if (bar) bar.style.width = Math.round(Math.min(1, Math.max(0, p)) * 100) + '%';
+    });
+    scanLast = { text, rows: matchScan(text) };
+    scanSheet('result', scanLast);
+  } catch (e) {
+    scanSheet('error', navigator.onLine === false
+      ? 'Нужен интернет: модуль распознавания ещё не загружен на это устройство.'
+      : 'Не получилось распознать снимок. Попробуйте ещё раз или другой скриншот.');
+  }
+}
+
 /* ================= Листы ================= */
 function openSheet(kind, html, focusSel) {
   const w = $('#sheet');
@@ -975,6 +1180,8 @@ function accountSheet(id) {
       '<label>Валюта<select class="inp" id="fCur">' + curOptions(a.cur || 'RUB') + '</select></label></div>' +
       '<p class="hint">Можно считать прямо в поле: <code>120000-4500</code> или <code>3*25000</code>.</p>' +
       '<label>Заметка<input class="inp" id="fNote" placeholder="Необязательно" value="' + esc(a.note || '') + '"></label>' +
+      '<label>Как называется на скриншотах<input class="inp" id="fAliases" placeholder="Например: Счёт Яндекс Банка, Сейв" value="' + esc((a.aliases || []).join(', ')) + '"></label>' +
+      '<p class="hint">Для кнопки «Обновить со скриншота»: если в банке счёт подписан иначе, впишите эти названия через запятую.</p>' +
       (id ? '<div class="actions start"><button type="button" class="btn sm" data-action="acc-up" data-id="' + esc(id) + '">↑ Выше</button><button type="button" class="btn sm" data-action="acc-down" data-id="' + esc(id) + '">↓ Ниже</button></div>' : '') +
       actionsHtml('delete-account', id) +
     '</form>', id ? '#fAmount' : '#fName');
@@ -1116,6 +1323,7 @@ document.addEventListener('click', e => {
       render();
       if (ui.adding) { const inp = document.getElementById('add-' + id); if (inp) inp.focus(); }
       break;
+    case 'scan': { const inp = $('#scanFile'); inp.value = ''; inp.click(); break; }
     case 'money-toggle': ui.moneyOpen = !ui.moneyOpen; saveUi(); render(); break;
     case 'swipe-del': {
       const r = getRec(id);
@@ -1301,13 +1509,28 @@ document.addEventListener('submit', e => {
     return;
   }
 
+  if (f.id === 'fScan') {
+    const now = Date.now();
+    const entries = [];
+    f.querySelectorAll('input[name="acc"]:checked').forEach(inp => {
+      const a = getRec(inp.value);
+      if (a) entries.push([a.id, Object.assign({}, a, { amount: Number(inp.dataset.amount), at: now })]);
+    });
+    closeSheet();
+    if (!entries.length) return;
+    const ids = entries.map(x => x[0]);
+    withUndo(ids, 'Обновлено счетов: ' + entries.length, () => putMany(entries));
+    return;
+  }
+
   if (f.id === 'fAccount') {
     const name = $('#fName').value.trim(); if (!name) return;
     const amount = evalAmount($('#fAmount').value);
     if (amount === null) { $('#fAmount').classList.add('err'); $('#fAmount').focus(); toast('Не получилось прочитать сумму'); return; }
     const id = f.dataset.id;
     const ex = id && getRec(id);
-    const body = { name, amount, cur: $('#fCur').value, note: $('#fNote').value.trim() };
+    const aliases = $('#fAliases').value.split(',').map(x => x.trim()).filter(Boolean);
+    const body = { name, amount, cur: $('#fCur').value, note: $('#fNote').value.trim(), aliases };
     closeSheet();
     if (ex) setRec(Object.assign({}, ex, body, { at: ex.amount !== amount || ex.cur !== body.cur ? Date.now() : (ex.at || Date.now()) }));
     else setRec(Object.assign({ id: newId('a'), kind: 'account', order: nextOrder('account'), createdAt: Date.now(), at: Date.now() }, body));
@@ -1347,6 +1570,7 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('err')) e.target.classList.remove('err'); });
 document.addEventListener('change', e => {
+  if (e.target.id === 'scanFile' && e.target.files && e.target.files[0]) { runScan(e.target.files[0]); return; }
   if (e.target.id === 'fAuto') { $('#fxAutoBox').hidden = !e.target.checked; $('#fxManualBox').hidden = e.target.checked; }
 });
 
