@@ -16,7 +16,8 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"></noscript>
 <style>
 :root{
   /* Layout: один экран. Телефон — колонка (цели, затем деньги); от 960px — две колонки: цели слева, деньги справа */
@@ -411,6 +412,11 @@ function saveFx() { try { localStorage.setItem(LS_FX, JSON.stringify(fx)); } cat
 let fx = loadFx();
 let fxLoading = false;
 
+function fetchWithTimeout(url, ms) {
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  const t = setTimeout(() => { if (ctrl) ctrl.abort(); }, ms);
+  return fetch(url, ctrl ? { signal: ctrl.signal } : {}).finally(() => clearTimeout(t));
+}
 function fxFromCbr(j) {
   if (!j || !j.Valute) throw new Error('fx');
   const toRub = { RUB: 1 };
@@ -437,7 +443,7 @@ async function fetchFx(force) {
   try {
     // 1) ЦБ РФ (зеркало в JSON)
     try {
-      const r = await fetch('https://www.cbr-xml-daily.ru/daily_json.js');
+      const r = await fetchWithTimeout('https://www.cbr-xml-daily.ru/daily_json.js', 8000);
       if (!r.ok) throw new Error('http');
       next = fxFromCbr(await r.json());
     } catch (e) {
@@ -445,7 +451,7 @@ async function fetchFx(force) {
       try { next = fxFromCbr(await cbrJsonp()); }
       catch (e2) {
         // 3) запасной источник с рыночными курсами
-        const r = await fetch('https://open.er-api.com/v6/latest/RUB');
+        const r = await fetchWithTimeout('https://open.er-api.com/v6/latest/RUB', 8000);
         const j = await r.json();
         if (!j || j.result !== 'success' || !j.rates) throw new Error('fx');
         const toRub = { RUB: 1 };
