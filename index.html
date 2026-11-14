@@ -1194,12 +1194,21 @@ setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000
 /* ================= Запуск ================= */
 async function init() {
   let setupFromLink = null;
+  let importFromLink = '';
   const h = location.hash.slice(1);
   if (h.indexOf('setup=') === 0) {
     try { const c = JSON.parse(b64urlDecode(h.slice(6))); if (c && c.url && c.key) setupFromLink = c; } catch (e) {}
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  } else if (h.indexOf('import=') === 0) {
+    try { importFromLink = b64urlDecode(h.slice(7)); } catch (e) {}
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
   }
   render();
+  if (importFromLink) {
+    importSheet();
+    const ta = $('#fText');
+    if (ta) ta.value = importFromLink;
+  }
   setSync(configured() ? 'ok' : 'off');
 
   if (autoRates()) fetchFx(false);
