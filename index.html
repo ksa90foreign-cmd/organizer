@@ -278,6 +278,8 @@ const LS_DATA = 'organizer.data.v2';
 const LS_CFG = 'organizer.config.v1';
 const LS_UI = 'organizer.ui.v1';
 const QR_LIB = 'lib/qrcode.js';
+const LS_FX = 'organizer.fx.v1';
+const FX_TTL = 6 * 3600000; // обновлять курсы не чаще раза в 6 часов
 
 const ICON = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
@@ -398,6 +400,86 @@ let state = loadState();
 let cfg = loadCfg();
 let lastU = 0;
 const ui = { mode: loadUi().mode === 'focus' ? 'focus' : 'all', showDone: {} };
+
+/* ================= Курсы валют ================= */
+/* fx.toRub[c] — сколько рублей стоит 1 единица валюты c */
+function loadFx() {
+  try { const f = JSON.parse(localStorage.getItem(LS_FX) || 'null'); if (f && f.toRub) return f; } catch (e) {}
+  return null;
+}
+function saveFx() { try { localStorage.setItem(LS_FX, JSON.stringify(fx)); } catch (e) {} }
+let fx = loadFx();
+let fxLoading = false;
+
+function fxFromCbr(j) {
+  if (!j || !j.Valute) throw new Error('fx');
+  const toRub = { RUB: 1 };
+  Object.keys(CURRENCIES).forEach(c => { const v = j.Valute[c]; if (v && v.Value && v.Nominal) toRub[c] = v.Value / v.Nominal; });
+  return { toRub, date: String(j.Date || '').slice(0, 10), source: 'ЦБ РФ', fetchedAt: Date.now() };
+}
+function cbrJsonp() {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    const done = (fn, v) => { clearTimeout(t); try { delete window.CBR_XML_Daily_Ru; } catch (e) { window.CBR_XML_Daily_Ru = undefined; } s.remove(); fn(v); };
+    const t = setTimeout(() => done(reject, new Error('timeout')), 10000);
+    window.CBR_XML_Daily_Ru = data => done(resolve, data);
+    s.src = 'https://www.cbr-xml-daily.ru/daily_jsonp.js';
+    s.onerror = () => done(reject, new Error('jsonp'));
+    document.head.appendChild(s);
+  });
+}
+async function fetchFx(force) {
+  if (fxLoading) return false;
+  if (!force && fx && Date.now() - fx.fetchedAt < FX_TTL) return true;
+  if (navigator.onLine === false) return false;
+  fxLoading = true;
+  let next = null;
+  try {
+    // 1) ЦБ РФ (зеркало в JSON)
+    try {
+      const r = await fetch('https://www.cbr-xml-daily.ru/daily_json.js');
+      if (!r.ok) throw new Error('http');
+      next = fxFromCbr(await r.json());
+    } catch (e) {
+      // 2) то же самое через JSONP, если браузер не дал прочитать ответ
+      try { next = fxFromCbr(await cbrJsonp()); }
+      catch (e2) {
+        // 3) запасной источник с рыночными курсами
+        const r = await fetch('https://open.er-api.com/v6/latest/RUB');
+        const j = await r.json();
+        if (!j || j.result !== 'success' || !j.rates) throw new Error('fx');
+        const toRub = { RUB: 1 };
+        Object.keys(CURRENCIES).forEach(c => { if (j.rates[c]) toRub[c] = 1 / j.rates[c]; });
+        next = { toRub, date: ymd(new Date((j.time_last_update_unix || Date.now() / 1000) * 1000)), source: 'open.er-api.com', fetchedAt: Date.now() };
+      }
+    }
+  } catch (e) {
+    next = null;
+  } finally {
+    fxLoading = false;
+  }
+  if (!next) return false;
+  fx = next;
+  saveFx();
+  render();
+  return true;
+}
+const autoRates = () => settings().autoRates !== false;
+function rateTo(c, base) {
+  if (c === base) return 1;
+  if (autoRates()) {
+    if (fx && fx.toRub[c] && fx.toRub[base]) return fx.toRub[c] / fx.toRub[base];
+    return 0;
+  }
+  const r = Number((settings().rates || {})[c]);
+  return r > 0 ? r : 0;
+}
+function fxDateText() {
+  if (!fx || !fx.date) return '';
+  const p = fx.date.split('-').map(Number);
+  return p.length === 3 ? p[2] + ' ' + MONTHS_GEN[p[1] - 1] : fx.date;
+}
+const nf4 = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const live = kind => Object.keys(state.records).map(id => state.records[id]).filter(r => r && r.kind === kind && !r.del);
 const getRec = id => { const r = state.records[id]; return r && !r.del ? r : null; };
@@ -609,14 +691,12 @@ function parseOutline(text) {
 function totals() {
   const by = {};
   accounts().forEach(a => { const c = a.cur || 'RUB'; by[c] = (by[c] || 0) + (Number(a.amount) || 0); });
-  const s = settings();
-  const base = s.base || 'RUB';
-  const rates = s.rates || {};
-  let sum = 0, missing = [];
+  const base = settings().base || 'RUB';
+  let sum = 0;
+  const missing = [];
   Object.keys(by).forEach(c => {
-    if (c === base) sum += by[c];
-    else if (Number(rates[c]) > 0) sum += by[c] * Number(rates[c]);
-    else missing.push(c);
+    const r = rateTo(c, base);
+    if (r > 0) sum += by[c] * r; else missing.push(c);
   });
   return { by, base, sum, missing };
 }
@@ -717,12 +797,21 @@ function renderMoney() {
   const curs = Object.keys(t.by);
   let big, sub = '', hint = '';
   if (!t.missing.length) {
-    big = fmtMoney(t.sum, t.base);
+    big = fmtMoney(Math.round(t.sum), t.base);
     if (curs.length > 1) sub = curs.map(c => '<span class="num">' + fmtMoney(t.by[c], c) + '</span>').join('');
   } else {
     big = curs.length === 1 ? fmtMoney(t.by[curs[0]], curs[0]) : '';
     sub = curs.length > 1 ? curs.map(c => '<span class="num">' + fmtMoney(t.by[c], c) + '</span>').join('') : '';
-    if (curs.length > 1) hint = '<div class="hint">Чтобы видеть общий итог, укажите курс ' + t.missing.map(c => CURRENCIES[c] || c).join(', ') + ' в <button type="button" class="link" data-action="open-settings">настройках</button>.</div>';
+    if (curs.length > 1) {
+      hint = autoRates()
+        ? '<div class="hint">' + (fxLoading ? 'Загружаю курсы…' : 'Нет курса ' + t.missing.map(c => CURRENCIES[c] || c).join(', ') + '. <button type="button" class="link" data-action="refresh-fx">Загрузить</button>') + '</div>'
+        : '<div class="hint">Чтобы видеть общий итог, укажите курс ' + t.missing.map(c => CURRENCIES[c] || c).join(', ') + ' в <button type="button" class="link" data-action="open-settings">настройках</button>.</div>';
+    }
+  }
+  const foreign = curs.filter(c => c !== t.base);
+  if (!t.missing.length && foreign.length) {
+    hint += '<div class="hint">' + (autoRates() ? 'Курс ' + (fx ? fx.source : '') + (fxDateText() ? ' на ' + fxDateText() : '') : 'Ваш курс') + ': ' +
+      foreign.map(c => '<span class="num">1 ' + (CURRENCIES[c] || c) + ' = ' + nf4.format(rateTo(c, t.base)) + ' ' + CURRENCIES[t.base] + '</span>').join(' · ') + '</div>';
   }
   $('#totals').innerHTML = '<div class="total">' +
     (big ? '<div class="big num">' + (t.missing.length || curs.length === 1 ? '' : '≈ ') + big + '</div>' : '') +
@@ -821,10 +910,16 @@ function settingsSheet() {
     '<form class="form" id="fMoney" autocomplete="off">' +
       '<h3>Общий итог по деньгам</h3>' +
       '<label>Показывать итог в валюте<select class="inp" id="fBase">' + curOptions(base) + '</select></label>' +
+      '<label class="check-line"><input type="checkbox" id="fAuto"' + (autoRates() ? ' checked' : '') + '> Курсы ЦБ РФ автоматически</label>' +
+      '<div id="fxAutoBox"' + (autoRates() ? '' : ' hidden') + '><p class="hint">' +
+        (fx ? 'Загружено: ' + esc(fx.source) + (fxDateText() ? ' на ' + fxDateText() : '') + '. Обновляется само при открытии приложения.' : 'Курсы ещё не загружены.') +
+        ' <button type="button" class="link" data-action="refresh-fx">Обновить сейчас</button></p></div>' +
+      '<div id="fxManualBox"' + (autoRates() ? ' hidden' : '') + '>' +
       (used.length
         ? '<div class="rates">' + used.map(c => '<label>1 ' + (CURRENCIES[c] || c) + ' = … ' + CURRENCIES[base] + '<input class="inp num" id="rate-' + c + '" data-cur="' + c + '" inputmode="decimal" placeholder="Курс" value="' + esc(rates[c] || '') + '"></label>').join('') + '</div>' +
           '<p class="hint">Курсы вводите вручную и обновляйте, когда нужно.</p>'
         : '<p class="hint">Когда появятся счета в других валютах, здесь можно будет указать курсы.</p>') +
+      '</div>' +
       '<div class="actions"><div class="r"><button type="submit" class="btn primary sm">Сохранить</button></div></div>' +
     '</form>' +
     '<hr class="sep">' +
@@ -920,6 +1015,13 @@ document.addEventListener('click', e => {
     case 'close-sheet': closeSheet(); break;
     case 'open-settings': settingsSheet(); break;
     case 'sync-now': sync(); break;
+    case 'refresh-fx':
+      fetchFx(true).then(ok => {
+        toast(ok ? 'Курсы обновлены: ' + fx.source + (fxDateText() ? ' на ' + fxDateText() : '') : 'Не удалось загрузить курсы, проверьте интернет');
+        if ($('#sheet').dataset.kind === 'settings' && $('#sheet').classList.contains('open')) settingsSheet();
+      });
+      render();
+      break;
     case 'disconnect':
       cfg = { url: '', key: '' };
       saveCfg();
@@ -1040,8 +1142,9 @@ document.addEventListener('submit', e => {
 
   if (f.id === 'fMoney') {
     const rates = Object.assign({}, settings().rates || {});
+    const auto = $('#fAuto').checked;
     let bad = false;
-    f.querySelectorAll('[data-cur]').forEach(inp => {
+    if (!auto) f.querySelectorAll('[data-cur]').forEach(inp => {
       const raw = inp.value.trim();
       if (!raw) { delete rates[inp.dataset.cur]; return; }
       const v = evalAmount(raw);
@@ -1051,8 +1154,9 @@ document.addEventListener('submit', e => {
     if (bad) return;
     const base = $('#fBase').value;
     const prevBase = settings().base || 'RUB';
-    setRec(Object.assign({ id: 'settings', kind: 'settings' }, settings(), { base, rates: base !== prevBase ? {} : rates }));
-    if (base !== prevBase) { settingsSheet(); toast('Валюта итога изменена, укажите курсы заново'); }
+    setRec(Object.assign({ id: 'settings', kind: 'settings' }, settings(), { base, autoRates: auto, rates: base !== prevBase ? {} : rates }));
+    if (auto) fetchFx(false);
+    if (base !== prevBase && !auto) { settingsSheet(); toast('Валюта итога изменена, укажите курсы заново'); }
     else { closeSheet(); toast('Сохранено'); }
     return;
   }
@@ -1068,6 +1172,9 @@ document.addEventListener('submit', e => {
 });
 
 document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('err')) e.target.classList.remove('err'); });
+document.addEventListener('change', e => {
+  if (e.target.id === 'fAuto') { $('#fxAutoBox').hidden = !e.target.checked; $('#fxManualBox').hidden = e.target.checked; }
+});
 
 window.addEventListener('storage', e => {
   if (e.key === LS_DATA) { state = loadState(); render(); }
@@ -1075,7 +1182,7 @@ window.addEventListener('storage', e => {
 });
 window.addEventListener('online', () => sync());
 window.addEventListener('offline', () => { if (configured()) setSync('offline'); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { render(); sync(); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { render(); sync(); if (autoRates()) fetchFx(false); } });
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
 
 /* ================= Запуск ================= */
@@ -1089,6 +1196,7 @@ async function init() {
   render();
   setSync(configured() ? 'ok' : 'off');
 
+  if (autoRates()) fetchFx(false);
   if (setupFromLink) await connect(setupFromLink.url, setupFromLink.key);
   else sync();
 
