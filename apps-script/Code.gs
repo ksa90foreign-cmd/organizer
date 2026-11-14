@@ -10,6 +10,10 @@
  * создавать Claude по вашей просьбе) при следующей синхронизации
  * вносятся в данные и отправляются в корзину.
  *
+ * Скриншоты: команда на iPhone распознаёт текст на последнем скриншоте
+ * и присылает его сюда (action: "ocr"); скрипт находит на нём названия
+ * ваших счетов и обновляет суммы.
+ *
  * Первый запуск: выберите функцию setup и нажмите «Выполнить».
  * В журнале появится ключ доступа — его нужно вставить в приложение.
  */
@@ -78,6 +82,7 @@ function handle_(req) {
   if (!secret) return json_({ ok: false, error: 'not_setup' });
   if (!req || req.key !== secret) return json_({ ok: false, error: 'auth' });
   if (req.action === 'ping') return json_({ ok: true, service: 'life-organizer' });
+  if (req.action === 'ocr') return handleOcr_(req);
   if (req.action !== 'sync') return json_({ ok: false, error: 'bad_action' });
 
   const lock = LockService.getScriptLock();
@@ -202,6 +207,111 @@ function applyInbox_(db) {
     f.setTrashed(true); // разобран (или повреждён) — убираем в корзину, восстановить можно оттуда
   });
   return applied;
+}
+
+/* ================= Суммы со скриншота ================= */
+
+function handleOcr_(req) {
+  const text = String(req.text || '');
+  if (!text.trim()) return json_({ ok: false, error: 'empty', message: 'На скриншоте не найден текст' });
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) return json_({ ok: false, error: 'busy', message: 'Сервер занят, попробуйте ещё раз' });
+  try {
+    const file = getDataFile_();
+    const db = readDb_(file);
+    const res = applyOcr_(db, text);
+    if (res.changed.length) writeDb_(file, db);
+    let message;
+    if (!res.found.length) message = 'Счета на скриншоте не найдены. Названия счетов в органайзере должны совпадать с названиями на скриншоте.';
+    else if (!res.changed.length) message = 'Суммы не изменились (' + res.found.length + ' ' + plural_(res.found.length, ['счёт', 'счёта', 'счетов']) + ')';
+    else message = 'Обновлено: ' + res.changed.map(function (c) { return c.name + ' ' + fmt_(c.amount); }).join('; ');
+    return json_({ ok: true, message: message, changed: res.changed, found: res.found.length });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function normText_(s) {
+  return String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9%]/g, '');
+}
+
+/* «85 000,00 руб», «2 700,000 €», «-1 234,5», «1,234.56» → число */
+function parseOcrAmount_(line) {
+  const m = String(line).replace(/[−–]/g, '-').match(/^\s*(-?\s*\d[\d\s\u00a0\u202f.,']*)/);
+  if (!m) return null;
+  let s = m[1].replace(/[\s\u00a0\u202f']/g, '').replace(/[.,]+$/, '');
+  const lastComma = s.lastIndexOf(','), lastDot = s.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) {
+    // оба разделителя: десятичный — последний
+    if (lastComma > lastDot) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (lastComma >= 0) {
+    s = s.replace(/,(?=.*,)/g, '').replace(',', '.');
+  } else if (lastDot >= 0 && (s.match(/\./g) || []).length > 1) {
+    s = s.replace(/\./g, '');
+  }
+  const v = parseFloat(s);
+  return isFinite(v) ? Math.round(v * 100) / 100 : null;
+}
+
+function applyOcr_(db, text) {
+  const lines = String(text).split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+  const accs = Object.keys(db.records).map(function (id) { return db.records[id]; })
+    .filter(function (r) { return r && r.kind === 'account' && !r.del && r.name; });
+  const found = [], changed = [], seen = {};
+
+  lines.forEach(function (line, i) {
+    const nl = normText_(line.replace(/[.…]+\s*$/, ''));
+    if (!nl) return;
+    let best = null, bestScore = 0, bestLen = 0, rest = '';
+    accs.forEach(function (a) {
+      const na = normText_(a.name);
+      if (!na) return;
+      let score = 0;
+      if (nl === na) score = 3;
+      else if (nl.indexOf(na) === 0) score = 2;               // в строке после названия идёт сумма
+      else if (nl.length >= 6 && na.indexOf(nl) === 0) score = 1; // название обрезано на скриншоте
+      if (score > bestScore || (score === bestScore && score && na.length > bestLen)) { best = a; bestScore = score; bestLen = na.length; }
+    });
+    if (!best || seen[best.id]) return;
+
+    // сумма: в той же строке после названия или в одной из двух следующих строк
+    let amount = null;
+    if (bestScore === 2) {
+      const afterName = line.length > best.name.length ? line.slice(best.name.length) : '';
+      amount = parseOcrAmount_(afterName.replace(/^[^0-9\-−]+/, ''));
+    }
+    for (let k = 1; amount === null && k <= 2 && i + k < lines.length; k++) {
+      amount = parseOcrAmount_(lines[i + k]);
+    }
+    if (amount === null) return;
+    seen[best.id] = true;
+    found.push(best.id);
+    if (Number(best.amount) !== amount) {
+      const rec = JSON.parse(JSON.stringify(best));
+      rec.amount = amount;
+      rec.at = Date.now();
+      rec.u = Math.max(Date.now(), (Number(best.u) || 0) + 1);
+      db.rev += 1;
+      rec.rv = db.rev;
+      db.records[rec.id] = rec;
+      changed.push({ name: rec.name, amount: amount, cur: rec.cur || 'RUB' });
+    }
+  });
+  return { found: found, changed: changed };
+}
+
+function plural_(n, f) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return f[2];
+  if (b > 1 && b < 5) return f[1];
+  if (b === 1) return f[0];
+  return f[2];
+}
+
+function fmt_(n) {
+  const s = (Math.round(n * 100) / 100).toString().split('.');
+  return s[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (s[1] ? ',' + s[1] : '');
 }
 
 function readDb_(file) {
