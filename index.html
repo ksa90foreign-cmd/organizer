@@ -139,7 +139,7 @@ a{color:var(--accent)}
 .group-h .cnt{font-family:var(--font-num);font-size:12px;color:var(--faint)}
 .group-h .icon-btn{margin-left:auto;width:30px;height:30px}
 .items{list-style:none;margin:0;padding:0}
-.item{display:flex;align-items:flex-start;gap:10px;padding:7px 0 7px 10px;border-left:2px solid transparent}
+.item{display:flex;align-items:flex-start;gap:10px;padding:7px 0 7px 10px}
 /* Свайп влево — удаление с подтверждением */
 .swipe{position:relative;overflow:hidden}
 .items .swipe{margin-left:-10px}
@@ -147,10 +147,11 @@ a{color:var(--accent)}
 .swipe-act{position:absolute;top:0;right:0;bottom:0;width:96px;display:flex;align-items:stretch;justify-content:flex-end;background:var(--danger);visibility:hidden}
 .swipe.open .swipe-act,.swipe.moving .swipe-act{visibility:visible}
 .swipe-act button{border:0;background:none;color:#fff;font-weight:600;font-size:14px;width:96px;cursor:pointer}
-.item.focus{border-left-color:var(--star)}
+
 .check{flex:0 0 20px;width:20px;height:20px;border-radius:50%;border:1.6px solid var(--faint);background:none;display:grid;place-items:center;cursor:pointer;margin-top:1px;padding:0;color:#fff}
 .check:hover{border-color:var(--ok)}
-.check.on{background:var(--ok);border-color:var(--ok)}
+.check.on{background:var(--star);border-color:var(--star)}
+.check:hover{border-color:var(--star)}
 .check svg{width:12px;height:12px}
 .txt{flex:1;min-width:0;cursor:pointer}
 .txt .t{overflow-wrap:anywhere}
@@ -171,7 +172,12 @@ a{color:var(--accent)}
 .group-h .plus-btn{margin-left:auto}
 .group-h .plus-btn + .icon-btn{margin-left:0}
 .sec-h .r{display:flex;align-items:center;gap:4px}
-.done-toggle{margin:2px 0 4px 30px;font-size:12.5px}
+.arch{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.arch:last-child{border-bottom:0}
+.arch .txt{cursor:default}
+.arch .when{display:block;font-size:12px;color:var(--faint);margin-top:2px}
+.arch-g{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:14px 0 2px}
+.arch-g:first-child{margin-top:0}
 .empty{color:var(--muted);font-size:14px;padding:10px 0}
 
 /* ---------- Деньги ---------- */
@@ -265,6 +271,7 @@ select.inp{appearance:auto}
         </div>
       </div>
       <div id="groups"></div>
+      <div class="foot-links" id="goalsFoot"></div>
     </section>
 
     <section class="panel money" aria-labelledby="moneyH">
@@ -421,7 +428,7 @@ let state = loadState();
 let cfg = loadCfg();
 let lastU = 0;
 const savedUi = loadUi();
-const ui = { mode: savedUi.mode === 'focus' ? 'focus' : 'all', showDone: {}, moneyOpen: !!savedUi.moneyOpen, adding: null };
+const ui = { mode: savedUi.mode === 'focus' ? 'focus' : 'all', moneyOpen: !!savedUi.moneyOpen, adding: null };
 
 /* ================= Курсы валют ================= */
 /* fx.toRub[c] — сколько рублей стоит 1 единица валюты c */
@@ -687,6 +694,31 @@ function addItem(gid, text) {
   if (!p.title) return;
   setRec({ id: newId('i'), kind: 'item', group: gid, title: p.title, details: p.details, focus: false, done: false, doneAt: null, createdAt: Date.now() });
 }
+const isArchived = it => !!(it.archived || it.done);
+const activeItems = () => live('item').filter(i => !isArchived(i));
+const archivedItems = () => live('item').filter(isArchived);
+function groupNameOf(gid) { const g = getRec(gid); return g ? g.name : ''; }
+function archivePatch(r) { return Object.assign({}, r, { archived: true, archivedAt: Date.now(), focus: false, groupName: groupNameOf(r.group) || r.groupName || '' }); }
+function archiveItem(id) {
+  const r = getRec(id); if (!r) return;
+  withUndo([id], '«' + r.title + '» в архиве', () => setRec(archivePatch(r)));
+}
+function restoreItem(id) {
+  const r = getRec(id); if (!r) return;
+  let group = r.group;
+  const entries = [];
+  if (!getRec(group)) {
+    const byName = r.groupName ? groups().find(g => normName(g.name) === normName(r.groupName)) : null;
+    if (byName) group = byName.id;
+    else if (r.groupName) {
+      // группу удалили — создаём заново с тем же названием
+      group = newId('g');
+      entries.push([group, { kind: 'group', name: r.groupName, order: nextOrder('group'), createdAt: Date.now() }]);
+    } else group = groups()[0] ? groups()[0].id : '';
+  }
+  entries.push([r.id, Object.assign({}, r, { archived: false, done: false, doneAt: null, archivedAt: null, group })]);
+  putMany(entries);
+}
 function toggle(id, field) {
   const r = getRec(id); if (!r) return;
   const patch = { [field]: !r[field] };
@@ -781,20 +813,21 @@ function swipeAct(id) {
   return '<div class="swipe-act"><button type="button" data-action="swipe-del" data-id="' + esc(id) + '">Удалить</button></div>';
 }
 function itemRow(it) {
-  return '<li class="swipe">' + swipeAct(it.id) + '<div class="item swipe-row' + (it.focus ? ' focus' : '') + (it.done ? ' done' : '') + '">' +
-    '<button type="button" class="check' + (it.done ? ' on' : '') + '" data-action="toggle-done" data-id="' + esc(it.id) + '" aria-label="' + (it.done ? 'Вернуть' : 'Готово') + '">' + (it.done ? ICON.check : '') + '</button>' +
+  return '<li class="swipe">' + swipeAct(it.id) + '<div class="item swipe-row' + (it.focus ? ' focus' : '') + '">' +
+    '<button type="button" class="check' + (it.focus ? ' on' : '') + '" data-action="toggle-focus" data-id="' + esc(it.id) + '" aria-pressed="' + !!it.focus + '" aria-label="' + (it.focus ? 'Убрать из работы' : 'Взять в работу') + '" title="' + (it.focus ? 'В работе — нажмите, чтобы убрать' : 'Взять в работу') + '">' + (it.focus ? ICON.check : '') + '</button>' +
     '<div class="txt" data-action="edit-item" data-id="' + esc(it.id) + '" role="button" tabindex="0">' +
       '<span class="t">' + richText(it.title) + '</span>' +
       (it.details ? '<span class="d">' + richText(it.details) + '</span>' : '') +
     '</div>' +
-    (it.done ? '' : '<button type="button" class="star' + (it.focus ? ' on' : '') + '" data-action="toggle-focus" data-id="' + esc(it.id) + '" aria-pressed="' + !!it.focus + '" aria-label="' + (it.focus ? 'Убрать из работы' : 'Взять в работу') + '" title="' + (it.focus ? 'Убрать из работы' : 'Взять в работу') + '">' + (it.focus ? ICON.starOn : ICON.star) + '</button>') +
   '</div></li>';
 }
 
 function renderGoals() {
   const gs = groups();
-  const items = live('item');
-  const focusCount = items.filter(i => i.focus && !i.done).length;
+  const items = activeItems();
+  const focusCount = items.filter(i => i.focus).length;
+  const archCount = archivedItems().length;
+  $('#goalsFoot').innerHTML = archCount ? '<button type="button" class="link muted" data-action="open-archive">Архив · ' + archCount + '</button>' : '';
   $('#focusCount').textContent = focusCount;
   $('#modeFocus').classList.toggle('on', ui.mode === 'focus');
   $('#modeAll').classList.toggle('on', ui.mode === 'all');
@@ -808,36 +841,33 @@ function renderGoals() {
   if (orphans.length) list.push({ id: '', name: 'Без группы', virtual: true });
 
   if (!list.length) {
-    $('#groups').innerHTML = '<div class="empty">Пока пусто. Создайте группу (например, «Обучение» или «Бюро»), добавьте в неё цели и отметьте звёздочкой то, над чем работаете сейчас. Или вставьте готовый список из заметок.</div>';
+    $('#groups').innerHTML = '<div class="empty">Пока пусто. Нажмите + вверху, чтобы создать группу или вставить список из заметок. Кружок слева у цели отмечает, что она в работе.</div>';
     return;
   }
 
   let html = '';
   list.forEach(g => {
     const its = g.virtual ? orphans : items.filter(i => i.group === g.id);
-    const open = its.filter(i => !i.done).sort((a, b) => (b.focus ? 1 : 0) - (a.focus ? 1 : 0) || (a.createdAt || 0) - (b.createdAt || 0));
-    const done = its.filter(i => i.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+    const open = its.slice().sort((a, b) => (b.focus ? 1 : 0) - (a.focus ? 1 : 0) || (a.createdAt || 0) - (b.createdAt || 0));
     if (ui.mode === 'focus') {
       const f = open.filter(i => i.focus);
       if (!f.length) return;
       html += '<div class="group"><div class="group-h"><h3>' + esc(g.name) + '</h3></div><ul class="items">' + f.map(itemRow).join('') + '</ul></div>';
       return;
     }
-    const gid = g.id || 'none';
     html += '<div class="group">' +
       '<div class="group-h"><h3' + (g.virtual ? '' : ' data-action="edit-group" data-id="' + esc(g.id) + '" role="button" tabindex="0"') + '>' + esc(g.name) + '</h3>' +
         '<span class="cnt">' + open.length + '</span>' +
         (g.virtual ? '' : '<button type="button" class="plus-btn" data-action="add-in" data-id="' + esc(g.id) + '" aria-label="Добавить цель в группу ' + esc(g.name) + '" title="Добавить цель">' + ICON.plus + '</button>' +
           '<button type="button" class="icon-btn" data-action="edit-group" data-id="' + esc(g.id) + '" aria-label="Настроить группу">' + ICON.dots + '</button>') +
       '</div>' +
-      '<ul class="items">' + open.map(itemRow).join('') + (ui.showDone[gid] ? done.map(itemRow).join('') : '') + '</ul>' +
+      '<ul class="items">' + open.map(itemRow).join('') + '</ul>' +
       (!g.virtual && ui.adding === g.id ? '<form class="add-item" data-group="' + esc(g.id) + '" autocomplete="off"><span class="plus" aria-hidden="true">+</span><label class="sr" for="add-' + esc(g.id) + '">Новая цель в группе ' + esc(g.name) + '</label><input id="add-' + esc(g.id) + '" placeholder="Новая цель (уточнение в скобках)" enterkeyhint="done"></form>' : '') +
-      (!open.length && !done.length && ui.adding !== g.id ? '<div class="empty" style="padding:2px 0 6px">Пусто. Нажмите + справа.</div>' : '') +
-      (done.length ? '<button type="button" class="link muted done-toggle" data-action="toggle-done-list" data-group="' + esc(gid) + '">' + (ui.showDone[gid] ? 'Скрыть выполненные' : 'Выполнено: ' + done.length) + '</button>' : '') +
+      (!open.length && ui.adding !== g.id ? '<div class="empty" style="padding:2px 0 6px">Пусто. Нажмите + справа.</div>' : '') +
     '</div>';
   });
   if (ui.mode === 'focus' && !html) {
-    html = '<div class="empty">В работе пока ничего. Переключитесь на «Все» и отметьте звёздочкой цели на ближайшее время.</div>';
+    html = '<div class="empty">В работе пока ничего. Переключитесь на «Все» и нажмите кружок слева у целей на ближайшее время.</div>';
   }
   $('#groups').innerHTML = html;
 }
@@ -918,13 +948,13 @@ function itemSheet(id) {
 function groupSheet(id) {
   const g = id ? getRec(id) : { name: '' };
   if (!g) return;
-  const n = id ? live('item').filter(i => i.group === id).length : 0;
+  const n = id ? activeItems().filter(i => i.group === id).length : 0;
   openSheet('group',
     '<h2>' + (id ? 'Группа' : 'Новая группа') + '</h2>' +
     '<form class="form" id="fGroupForm" data-id="' + esc(id || '') + '" autocomplete="off">' +
       '<label>Название<input class="inp" id="fName" required placeholder="Например: Обучение" value="' + esc(g.name) + '"></label>' +
       (id ? '<div class="actions start"><button type="button" class="btn sm" data-action="group-up" data-id="' + esc(id) + '">↑ Выше</button><button type="button" class="btn sm" data-action="group-down" data-id="' + esc(id) + '">↓ Ниже</button></div>' : '') +
-      (id && n ? '<p class="hint">При удалении группы удалятся и её цели (' + n + '). Удаление можно отменить сразу после него.</p>' : '') +
+      (id && n ? '<p class="hint">При удалении группы её цели (' + n + ') уйдут в архив.</p>' : '') +
       actionsHtml('delete-group', id) +
     '</form>', '#fName');
 }
@@ -950,6 +980,26 @@ function accountSheet(id) {
     '</form>', id ? '#fAmount' : '#fName');
 }
 
+function archiveSheet() {
+  const list = archivedItems().sort((a, b) => (b.archivedAt || b.doneAt || 0) - (a.archivedAt || a.doneAt || 0));
+  if (!list.length) { closeSheet(); return; }
+  const by = {};
+  list.forEach(it => { const n = groupNameOf(it.group) || it.groupName || 'Без группы'; (by[n] = by[n] || []).push(it); });
+  openSheet('archive',
+    '<h2>Архив</h2>' +
+    '<p class="hint" style="margin-bottom:8px">Удалённые цели. Их можно вернуть в список или удалить насовсем.</p>' +
+    Object.keys(by).map(n =>
+      '<div class="arch-g">' + esc(n) + '</div>' +
+      by[n].map(it => {
+        const when = it.archivedAt || it.doneAt;
+        return '<div class="arch"><div class="txt"><span class="t">' + richText(it.title) + '</span>' +
+          (it.details ? '<span class="d">' + richText(it.details) + '</span>' : '') +
+          (when ? '<span class="when">удалено ' + ago(when) + '</span>' : '') + '</div>' +
+          '<button type="button" class="btn sm" data-action="restore-item" data-id="' + esc(it.id) + '">Вернуть</button>' +
+          '<button type="button" class="icon-btn" data-action="purge-item" data-id="' + esc(it.id) + '" aria-label="Удалить насовсем" title="Удалить насовсем">×</button></div>';
+      }).join('')).join('') +
+    '<div class="actions"><div class="r"><button type="button" class="btn" data-action="close-sheet">Закрыть</button></div></div>');
+}
 function goalsAddSheet() {
   openSheet('choose',
     '<h2>Добавить</h2><div class="form">' +
@@ -1071,22 +1121,33 @@ document.addEventListener('click', e => {
       const r = getRec(id);
       closeSwipe();
       if (!r) break;
-      withUndo([id], (r.kind === 'account' ? 'Счёт «' + r.name + '»' : 'Цель «' + r.title + '»') + (r.kind === 'account' ? ' удалён' : ' удалена'), () => delRec(id));
+      if (r.kind === 'item') archiveItem(id);
+      else withUndo([id], 'Счёт «' + r.name + '» удалён', () => delRec(id));
       break;
     }
-    case 'toggle-done': toggle(id, 'done'); break;
     case 'toggle-focus': toggle(id, 'focus'); break;
-    case 'toggle-done-list': { const g = el.dataset.group; ui.showDone[g] = !ui.showDone[g]; render(); break; }
+    case 'open-archive': archiveSheet(); break;
+    case 'restore-item': restoreItem(id); toast('Цель возвращена'); archiveSheet(); break;
+    case 'purge-item': {
+      const r = getRec(id);
+      if (!r) break;
+      if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Точно?'; el.style.width = 'auto'; el.style.padding = '0 8px'; el.style.color = 'var(--danger)'; break; }
+      withUndo([id], '«' + r.title + '» удалена насовсем', () => delRec(id));
+      archiveSheet();
+      break;
+    }
+
     case 'edit-item': itemSheet(id); break;
-    case 'delete-item': closeSheet(); withUndo([id], 'Цель удалена', () => delRec(id)); break;
+    case 'delete-item': closeSheet(); archiveItem(id); break;
 
     case 'new-group': closeSheet(); groupSheet(null); break;
     case 'edit-group': groupSheet(id); break;
     case 'group-up': case 'group-down': moveRec(id, a === 'group-up' ? -1 : 1, groups()); break;
     case 'delete-group': {
       closeSheet();
-      const ids = [id].concat(live('item').filter(i => i.group === id).map(i => i.id));
-      withUndo(ids, 'Группа удалена', () => putMany(ids.map(x => [x, null])));
+      const its = live('item').filter(i => i.group === id);
+      const ids = [id].concat(its.map(i => i.id));
+      withUndo(ids, 'Группа удалена, цели в архиве', () => putMany([[id, null]].concat(its.map(i => [i.id, isArchived(i) ? Object.assign({}, i, { groupName: i.groupName || groupNameOf(id) }) : archivePatch(i)]))));
       break;
     }
     case 'open-import': closeSheet(); importSheet(); break;
@@ -1164,7 +1225,7 @@ document.addEventListener('submit', e => {
     const ex = getRec(f.dataset.id); if (!ex) { closeSheet(); return; }
     const g = $('#fGroup');
     closeSheet();
-    setRec(Object.assign({}, ex, { title, details: $('#fDetails').value.trim(), group: g ? g.value : ex.group, focus: $('#fFocus').checked && !ex.done }));
+    setRec(Object.assign({}, ex, { title, details: $('#fDetails').value.trim(), group: g ? g.value : ex.group, focus: $('#fFocus').checked }));
     return;
   }
 
@@ -1210,7 +1271,7 @@ document.addEventListener('submit', e => {
         const same = existingItems.find(x => x.group === gid && normName(x.title) === normName(p.title));
         if (same) {
           // уже есть: только отмечаем «в работе», если это указано
-          if (it.focus && !same.focus && !same.done) { entries.push([same.id, Object.assign({}, same, { focus: true })]); updItems++; }
+          if (it.focus && !same.focus && !isArchived(same)) { entries.push([same.id, Object.assign({}, same, { focus: true })]); updItems++; }
           return;
         }
         entries.push([newId('i') + k, { kind: 'item', group: gid, title: p.title, details: p.details, focus: it.focus, done: false, doneAt: null, createdAt: now + k }]);
