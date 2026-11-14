@@ -139,7 +139,14 @@ a{color:var(--accent)}
 .group-h .cnt{font-family:var(--font-num);font-size:12px;color:var(--faint)}
 .group-h .icon-btn{margin-left:auto;width:30px;height:30px}
 .items{list-style:none;margin:0;padding:0}
-.item{display:flex;align-items:flex-start;gap:10px;padding:7px 0 7px 10px;margin-left:-10px;border-left:2px solid transparent}
+.item{display:flex;align-items:flex-start;gap:10px;padding:7px 0 7px 10px;border-left:2px solid transparent}
+/* Свайп влево — удаление с подтверждением */
+.swipe{position:relative;overflow:hidden}
+.items .swipe{margin-left:-10px}
+.swipe-row{position:relative;z-index:1;background:var(--surface);transition:transform .2s ease;touch-action:pan-y}
+.swipe-act{position:absolute;top:0;right:0;bottom:0;width:96px;display:flex;align-items:stretch;justify-content:flex-end;background:var(--danger);visibility:hidden}
+.swipe.open .swipe-act,.swipe.moving .swipe-act{visibility:visible}
+.swipe-act button{border:0;background:none;color:#fff;font-weight:600;font-size:14px;width:96px;cursor:pointer}
 .item.focus{border-left-color:var(--star)}
 .check{flex:0 0 20px;width:20px;height:20px;border-radius:50%;border:1.6px solid var(--faint);background:none;display:grid;place-items:center;cursor:pointer;margin-top:1px;padding:0;color:#fff}
 .check:hover{border-color:var(--ok)}
@@ -156,19 +163,31 @@ a{color:var(--accent)}
 .star svg{width:18px;height:18px}
 .add-item{display:flex;align-items:center;gap:10px;padding:4px 0 6px}
 .add-item .plus{flex:0 0 20px;text-align:center;color:var(--faint);font-size:18px;line-height:1}
-.add-item input{flex:1;min-width:0;border:0;background:none;padding:5px 0;font-size:15px;outline:none;border-bottom:1px solid transparent}
-.add-item input:focus{border-bottom-color:var(--accent)}
+.add-item input{flex:1;min-width:0;border:0;background:none;padding:5px 0;font-size:16px;outline:none;border-bottom:1px solid var(--accent)}
 .add-item input::placeholder{color:var(--faint)}
+.plus-btn{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:8px;border:0;background:none;color:var(--muted);cursor:pointer;padding:0;flex:0 0 auto}
+.plus-btn:hover{background:var(--surface-2);color:var(--accent)}
+.plus-btn svg{width:18px;height:18px}
+.group-h .plus-btn{margin-left:auto}
+.group-h .plus-btn + .icon-btn{margin-left:0}
+.sec-h .r{display:flex;align-items:center;gap:4px}
 .done-toggle{margin:2px 0 4px 30px;font-size:12.5px}
 .empty{color:var(--muted);font-size:14px;padding:10px 0}
 
 /* ---------- Деньги ---------- */
-.total{padding:6px 0 10px;border-bottom:1px solid var(--line)}
+.total{padding:4px 0 8px}
+.money-toggle{display:flex;align-items:center;gap:6px;width:100%;background:none;border:0;border-top:1px solid var(--line);padding:9px 0 3px;color:var(--muted);font-size:13.5px;cursor:pointer;text-align:left}
+.money-toggle:hover{color:var(--ink)}
+.money-toggle svg{width:16px;height:16px;transition:transform .2s ease}
+.money-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
+.money-detail{padding-top:4px}
+.money-detail .sub{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--muted)}
+.money-detail .hint{margin:4px 0 6px}
 .total .big{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
 .total .sub{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--muted);margin-top:4px}
 .total .hint{font-size:12.5px;color:var(--muted);margin-top:4px}
 .acc{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer}
-.acc:last-child{border-bottom:0}
+.money-detail .swipe:last-child .acc{border-bottom:0}
 .acc .name{min-width:0;overflow-wrap:anywhere}
 .acc .note{display:block;font-size:12.5px;color:var(--muted)}
 .acc .amt{white-space:nowrap;font-weight:500;text-align:right}
@@ -237,22 +256,21 @@ select.inp{appearance:auto}
     <section class="panel goals" aria-labelledby="goalsH">
       <div class="sec-h">
         <h2 id="goalsH">Цели</h2>
-        <div class="seg" role="group" aria-label="Что показывать">
-          <button type="button" data-action="mode" data-mode="focus" id="modeFocus">В работе<span class="n" id="focusCount">0</span></button>
-          <button type="button" data-action="mode" data-mode="all" id="modeAll">Все</button>
+        <div class="r">
+          <div class="seg" role="group" aria-label="Что показывать">
+            <button type="button" data-action="mode" data-mode="focus" id="modeFocus">В работе<span class="n" id="focusCount">0</span></button>
+            <button type="button" data-action="mode" data-mode="all" id="modeAll">Все</button>
+          </div>
+          <button type="button" class="plus-btn" data-action="goals-add" aria-label="Добавить группу или список" title="Добавить группу или список"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
         </div>
       </div>
       <div id="groups"></div>
-      <div class="foot-links" id="goalLinks">
-        <button type="button" class="link" data-action="new-group">+ Группа</button>
-        <button type="button" class="link muted" data-action="open-import">Вставить список из заметок</button>
-      </div>
     </section>
 
     <section class="panel money" aria-labelledby="moneyH">
       <div class="sec-h">
         <h2 id="moneyH">Деньги</h2>
-        <button type="button" class="link" data-action="new-account">+ Счёт</button>
+        <button type="button" class="plus-btn" data-action="new-account" aria-label="Добавить счёт" title="Добавить счёт"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
       <div id="totals"></div>
       <div id="accounts"></div>
@@ -286,7 +304,9 @@ const ICON = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
   star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5Z"/></svg>',
   starOn: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5Z"/></svg>',
-  dots: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg>'
+  dots: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>'
 };
 
 /* ================= Утилиты ================= */
@@ -395,12 +415,13 @@ function loadUi() {
   try { const u = JSON.parse(localStorage.getItem(LS_UI) || 'null'); if (u) return u; } catch (e) {}
   return {};
 }
-function saveUi() { try { localStorage.setItem(LS_UI, JSON.stringify({ mode: ui.mode })); } catch (e) {} }
+function saveUi() { try { localStorage.setItem(LS_UI, JSON.stringify({ mode: ui.mode, moneyOpen: ui.moneyOpen })); } catch (e) {} }
 
 let state = loadState();
 let cfg = loadCfg();
 let lastU = 0;
-const ui = { mode: loadUi().mode === 'focus' ? 'focus' : 'all', showDone: {} };
+const savedUi = loadUi();
+const ui = { mode: savedUi.mode === 'focus' ? 'focus' : 'all', showDone: {}, moneyOpen: !!savedUi.moneyOpen, adding: null };
 
 /* ================= Курсы валют ================= */
 /* fx.toRub[c] — сколько рублей стоит 1 единица валюты c */
@@ -756,15 +777,18 @@ function render() {
   restoreFocus(f);
 }
 
+function swipeAct(id) {
+  return '<div class="swipe-act"><button type="button" data-action="swipe-del" data-id="' + esc(id) + '">Удалить</button></div>';
+}
 function itemRow(it) {
-  return '<li class="item' + (it.focus ? ' focus' : '') + (it.done ? ' done' : '') + '">' +
+  return '<li class="swipe">' + swipeAct(it.id) + '<div class="item swipe-row' + (it.focus ? ' focus' : '') + (it.done ? ' done' : '') + '">' +
     '<button type="button" class="check' + (it.done ? ' on' : '') + '" data-action="toggle-done" data-id="' + esc(it.id) + '" aria-label="' + (it.done ? 'Вернуть' : 'Готово') + '">' + (it.done ? ICON.check : '') + '</button>' +
     '<div class="txt" data-action="edit-item" data-id="' + esc(it.id) + '" role="button" tabindex="0">' +
       '<span class="t">' + richText(it.title) + '</span>' +
       (it.details ? '<span class="d">' + richText(it.details) + '</span>' : '') +
     '</div>' +
     (it.done ? '' : '<button type="button" class="star' + (it.focus ? ' on' : '') + '" data-action="toggle-focus" data-id="' + esc(it.id) + '" aria-pressed="' + !!it.focus + '" aria-label="' + (it.focus ? 'Убрать из работы' : 'Взять в работу') + '" title="' + (it.focus ? 'Убрать из работы' : 'Взять в работу') + '">' + (it.focus ? ICON.starOn : ICON.star) + '</button>') +
-  '</li>';
+  '</div></li>';
 }
 
 function renderGoals() {
@@ -776,7 +800,7 @@ function renderGoals() {
   $('#modeAll').classList.toggle('on', ui.mode === 'all');
   $('#modeFocus').setAttribute('aria-pressed', ui.mode === 'focus');
   $('#modeAll').setAttribute('aria-pressed', ui.mode === 'all');
-  $('#goalLinks').hidden = ui.mode === 'focus';
+  openSwipe = null;
 
   const known = new Set(gs.map(g => g.id));
   const orphans = items.filter(i => !known.has(i.group));
@@ -803,10 +827,12 @@ function renderGoals() {
     html += '<div class="group">' +
       '<div class="group-h"><h3' + (g.virtual ? '' : ' data-action="edit-group" data-id="' + esc(g.id) + '" role="button" tabindex="0"') + '>' + esc(g.name) + '</h3>' +
         '<span class="cnt">' + open.length + '</span>' +
-        (g.virtual ? '' : '<button type="button" class="icon-btn" data-action="edit-group" data-id="' + esc(g.id) + '" aria-label="Настроить группу">' + ICON.dots + '</button>') +
+        (g.virtual ? '' : '<button type="button" class="plus-btn" data-action="add-in" data-id="' + esc(g.id) + '" aria-label="Добавить цель в группу ' + esc(g.name) + '" title="Добавить цель">' + ICON.plus + '</button>' +
+          '<button type="button" class="icon-btn" data-action="edit-group" data-id="' + esc(g.id) + '" aria-label="Настроить группу">' + ICON.dots + '</button>') +
       '</div>' +
       '<ul class="items">' + open.map(itemRow).join('') + (ui.showDone[gid] ? done.map(itemRow).join('') : '') + '</ul>' +
-      (g.virtual ? '' : '<form class="add-item" data-group="' + esc(g.id) + '" autocomplete="off"><span class="plus" aria-hidden="true">+</span><label class="sr" for="add-' + esc(g.id) + '">Добавить цель в группу ' + esc(g.name) + '</label><input id="add-' + esc(g.id) + '" placeholder="Добавить цель" enterkeyhint="done"></form>') +
+      (!g.virtual && ui.adding === g.id ? '<form class="add-item" data-group="' + esc(g.id) + '" autocomplete="off"><span class="plus" aria-hidden="true">+</span><label class="sr" for="add-' + esc(g.id) + '">Новая цель в группе ' + esc(g.name) + '</label><input id="add-' + esc(g.id) + '" placeholder="Новая цель (уточнение в скобках)" enterkeyhint="done"></form>' : '') +
+      (!open.length && !done.length && ui.adding !== g.id ? '<div class="empty" style="padding:2px 0 6px">Пусто. Нажмите + справа.</div>' : '') +
       (done.length ? '<button type="button" class="link muted done-toggle" data-action="toggle-done-list" data-group="' + esc(gid) + '">' + (ui.showDone[gid] ? 'Скрыть выполненные' : 'Выполнено: ' + done.length) + '</button>' : '') +
     '</div>';
   });
@@ -820,7 +846,8 @@ function renderMoney() {
   const accs = accounts();
   if (!accs.length) {
     $('#totals').innerHTML = '';
-    $('#accounts').innerHTML = '<div class="empty">Добавьте счета: где и сколько лежит. Например, «Карта», «Наличные», «Вклад». Сумму потом обновляете одним нажатием.</div>';
+    $('#accounts').hidden = false;
+    $('#accounts').innerHTML = '<div class="empty">Добавьте счета кнопкой + : где и сколько лежит. Например, «Карта», «Наличные», «Вклад».</div>';
     return;
   }
   const t = totals();
@@ -844,15 +871,19 @@ function renderMoney() {
       foreign.map(c => '<span class="num">1 ' + (CURRENCIES[c] || c) + ' = ' + nf4.format(rateTo(c, t.base)) + ' ' + CURRENCIES[t.base] + '</span>').join(' · ') + '</div>';
   }
   $('#totals').innerHTML = '<div class="total">' +
-    (big ? '<div class="big num">' + (t.missing.length || curs.length === 1 ? '' : '≈ ') + big + '</div>' : '') +
-    (sub ? '<div class="sub">' + sub + '</div>' : '') + hint + '</div>';
-  $('#accounts').innerHTML = accs.map(a => {
+    (big ? '<div class="big num">' + (t.missing.length || curs.length === 1 ? '' : '≈ ') + big + '</div>' : '<div class="sub" style="font-size:16px;color:var(--ink)">' + sub + '</div>' + hint) +
+    '</div>' +
+    '<button type="button" class="money-toggle" data-action="money-toggle" aria-expanded="' + ui.moneyOpen + '" aria-controls="accounts">' +
+      '<span>Где лежит · ' + accs.length + ' ' + plural(accs.length, ['счёт', 'счёта', 'счетов']) + '</span>' + ICON.chevron + '</button>';
+  const rows = accs.map(a => {
     const n = Number(a.amount) || 0;
-    return '<div class="acc" data-action="edit-account" data-id="' + esc(a.id) + '" role="button" tabindex="0">' +
+    return '<div class="swipe">' + swipeAct(a.id) + '<div class="acc swipe-row" data-action="edit-account" data-id="' + esc(a.id) + '" role="button" tabindex="0">' +
       '<div class="name">' + esc(a.name) + (a.note ? '<span class="note">' + esc(a.note) + '</span>' : '') + '</div>' +
       '<div class="amt num' + (n < 0 ? ' neg' : '') + '">' + fmtMoney(n, a.cur || 'RUB') + (a.at && Date.now() - a.at >= 7 * 86400000 ? '<span class="when">обновлено ' + ago(a.at) + '</span>' : '') + '</div>' +
-    '</div>';
+    '</div></div>';
   }).join('');
+  $('#accounts').hidden = !ui.moneyOpen;
+  $('#accounts').innerHTML = '<div class="money-detail">' + (big && sub ? '<div class="sub">' + sub + '</div>' : '') + (big ? hint : '') + rows + '</div>';
 }
 
 /* ================= Листы ================= */
@@ -919,6 +950,13 @@ function accountSheet(id) {
     '</form>', id ? '#fAmount' : '#fName');
 }
 
+function goalsAddSheet() {
+  openSheet('choose',
+    '<h2>Добавить</h2><div class="form">' +
+      '<button type="button" class="btn" style="text-align:left;padding:14px" data-action="new-group"><b>Группа</b><br><span class="hint">Например, «Обучение» или «Бюро 215»</span></button>' +
+      '<button type="button" class="btn" style="text-align:left;padding:14px" data-action="open-import"><b>Список из заметок</b><br><span class="hint">Вставить текст: группы, цели, счета</span></button>' +
+    '</div>');
+}
 function importSheet() {
   openSheet('import',
     '<h2>Вставить список</h2>' +
@@ -1012,6 +1050,8 @@ async function copyText(text, fallbackEl) {
 
 /* ================= События ================= */
 document.addEventListener('click', e => {
+  if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); return; }
+  if (openSwipe && !e.target.closest('.swipe-act')) { closeSwipe(); e.preventDefault(); return; }
   if (e.target.closest('a[href]')) return;
   if (e.target === $('#sheet')) { closeSheet(); return; }
   const el = e.target.closest('[data-action]');
@@ -1019,14 +1059,28 @@ document.addEventListener('click', e => {
   const a = el.dataset.action, id = el.dataset.id;
 
   switch (a) {
-    case 'mode': ui.mode = el.dataset.mode; saveUi(); render(); break;
+    case 'mode': ui.mode = el.dataset.mode; ui.adding = null; saveUi(); render(); break;
+    case 'goals-add': goalsAddSheet(); break;
+    case 'add-in':
+      ui.adding = ui.adding === id ? null : id;
+      render();
+      if (ui.adding) { const inp = document.getElementById('add-' + id); if (inp) inp.focus(); }
+      break;
+    case 'money-toggle': ui.moneyOpen = !ui.moneyOpen; saveUi(); render(); break;
+    case 'swipe-del': {
+      const r = getRec(id);
+      closeSwipe();
+      if (!r) break;
+      withUndo([id], (r.kind === 'account' ? 'Счёт «' + r.name + '»' : 'Цель «' + r.title + '»') + (r.kind === 'account' ? ' удалён' : ' удалена'), () => delRec(id));
+      break;
+    }
     case 'toggle-done': toggle(id, 'done'); break;
     case 'toggle-focus': toggle(id, 'focus'); break;
     case 'toggle-done-list': { const g = el.dataset.group; ui.showDone[g] = !ui.showDone[g]; render(); break; }
     case 'edit-item': itemSheet(id); break;
     case 'delete-item': closeSheet(); withUndo([id], 'Цель удалена', () => delRec(id)); break;
 
-    case 'new-group': groupSheet(null); break;
+    case 'new-group': closeSheet(); groupSheet(null); break;
     case 'edit-group': groupSheet(id); break;
     case 'group-up': case 'group-down': moveRec(id, a === 'group-up' ? -1 : 1, groups()); break;
     case 'delete-group': {
@@ -1035,7 +1089,7 @@ document.addEventListener('click', e => {
       withUndo(ids, 'Группа удалена', () => putMany(ids.map(x => [x, null])));
       break;
     }
-    case 'open-import': importSheet(); break;
+    case 'open-import': closeSheet(); importSheet(); break;
 
     case 'new-account': accountSheet(null); break;
     case 'edit-account': accountSheet(id); break;
@@ -1089,6 +1143,7 @@ document.addEventListener('click', e => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && $('#sheet').classList.contains('open')) { closeSheet(); return; }
+  if (e.key === 'Escape' && ui.adding && e.target.closest && e.target.closest('.add-item')) { ui.adding = null; render(); return; }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"][data-action]')) { e.preventDefault(); e.target.click(); }
 });
 
@@ -1120,8 +1175,11 @@ document.addEventListener('submit', e => {
     const ex = id && getRec(id);
     if (ex) setRec(Object.assign({}, ex, { name }));
     else {
+      ui.adding = null;
       const gid = addGroup(name);
-      if (ui.mode !== 'all') { ui.mode = 'all'; saveUi(); render(); }
+      ui.adding = gid;
+      if (ui.mode !== 'all') { ui.mode = 'all'; saveUi(); }
+      render();
       setTimeout(() => { const inp = document.getElementById('add-' + gid); if (inp) inp.focus(); }, 50);
     }
     return;
@@ -1230,6 +1288,68 @@ document.addEventListener('input', e => { if (e.target.classList && e.target.cla
 document.addEventListener('change', e => {
   if (e.target.id === 'fAuto') { $('#fxAutoBox').hidden = !e.target.checked; $('#fxManualBox').hidden = e.target.checked; }
 });
+
+/* Закрыть пустое поле новой цели, когда фокус ушёл */
+document.addEventListener('focusout', e => {
+  const f = e.target.closest && e.target.closest('.add-item');
+  if (!f || e.target.value.trim()) return;
+  setTimeout(() => {
+    const a = document.activeElement;
+    if (ui.adding && !(a && a.closest && (a.closest('.add-item') || a.dataset.action === 'add-in'))) { ui.adding = null; render(); }
+  }, 150);
+});
+
+/* ================= Свайп влево: удалить ================= */
+const SWIPE_W = 96;
+let sw = null, openSwipe = null, suppressClickUntil = 0;
+function closeSwipe(row) {
+  row = row || openSwipe;
+  if (!row) return;
+  row.style.transform = '';
+  const box = row.closest('.swipe');
+  if (box) setTimeout(() => box.classList.remove('open', 'moving'), 200);
+  if (openSwipe === row) openSwipe = null;
+}
+document.addEventListener('touchstart', e => {
+  const row = e.target.closest('.swipe-row');
+  if (openSwipe && openSwipe !== row && !e.target.closest('.swipe-act')) closeSwipe();
+  if (!row || e.touches.length !== 1) { sw = null; return; }
+  const t = e.touches[0];
+  sw = { row, x0: t.clientX, y0: t.clientY, dx: 0, base: row === openSwipe ? -SWIPE_W : 0, decided: false, moving: false };
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!sw) return;
+  const t = e.touches[0];
+  const dx = t.clientX - sw.x0, dy = t.clientY - sw.y0;
+  if (!sw.decided) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    sw.decided = true;
+    sw.moving = Math.abs(dx) > Math.abs(dy) * 1.2 && (dx < 0 || sw.base < 0);
+    if (sw.moving) sw.row.closest('.swipe').classList.add('moving');
+  }
+  if (!sw.moving) return;
+  e.preventDefault();
+  sw.dx = dx;
+  const x = Math.max(-SWIPE_W * 1.5, Math.min(0, sw.base + dx));
+  sw.row.style.transition = 'none';
+  sw.row.style.transform = 'translateX(' + x + 'px)';
+}, { passive: false });
+document.addEventListener('touchend', () => {
+  if (!sw) return;
+  const s = sw; sw = null;
+  if (!s.moving) return;
+  suppressClickUntil = Date.now() + 350;
+  s.row.style.transition = '';
+  if (s.base + s.dx < -SWIPE_W / 2) {
+    if (openSwipe && openSwipe !== s.row) closeSwipe();
+    s.row.style.transform = 'translateX(' + (-SWIPE_W) + 'px)';
+    s.row.closest('.swipe').classList.add('open');
+    openSwipe = s.row;
+  } else {
+    closeSwipe(s.row);
+  }
+});
+document.addEventListener('touchcancel', () => { if (sw && sw.moving) closeSwipe(sw.row); sw = null; });
 
 window.addEventListener('storage', e => {
   if (e.key === LS_DATA) { state = loadState(); render(); }
