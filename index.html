@@ -143,7 +143,13 @@ a{color:var(--accent)}
 /* Свайп влево — удаление с подтверждением */
 .swipe{position:relative;overflow:hidden}
 .items .swipe{margin-left:-10px}
-.swipe-row{position:relative;z-index:1;background:var(--surface);transition:transform .2s ease;touch-action:pan-y}
+.swipe-row{position:relative;z-index:1;background:var(--surface);transition:transform .2s ease;touch-action:pan-y;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+/* Перетаскивание */
+.drag-ghost{position:fixed;z-index:70;pointer-events:none;margin:0;border-radius:10px;background:var(--surface);box-shadow:0 12px 32px rgba(0,0,0,.28);opacity:.97;transform:scale(1.02)}
+.swipe.dragging{opacity:.25}
+.drop-line{list-style:none;height:3px;margin:1px 0;border-radius:3px;background:var(--accent)}
+body.is-dragging,body.is-dragging *{cursor:grabbing !important}
+.group.drop-target{background:color-mix(in srgb,var(--accent) 6%,transparent);border-radius:8px}
 .swipe-act{position:absolute;top:0;right:0;bottom:0;width:96px;display:flex;align-items:stretch;justify-content:flex-end;background:var(--danger);visibility:hidden}
 .swipe.open .swipe-act,.swipe.moving .swipe-act{visibility:visible}
 .swipe-act button{border:0;background:none;color:#fff;font-weight:600;font-size:14px;width:96px;cursor:pointer}
@@ -534,6 +540,9 @@ const live = kind => Object.keys(state.records).map(id => state.records[id]).fil
 const getRec = id => { const r = state.records[id]; return r && !r.del ? r : null; };
 const settings = () => getRec('settings') || {};
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0);
+/* цели: ручной порядок; у новых без порядка — в конец по времени создания */
+const itemKey = it => (typeof it.order === 'number' ? it.order : 1e7 + (it.createdAt || 0) / 1e6);
+const byItemOrder = (a, b) => itemKey(a) - itemKey(b);
 const groups = () => live('group').sort(byOrder);
 const accounts = () => live('account').sort(byOrder);
 const nextOrder = kind => live(kind).reduce((m, r) => Math.max(m, r.order || 0), 0) + 1;
@@ -707,7 +716,8 @@ function addGroup(name) {
 function addItem(gid, text) {
   const p = splitTitle(text);
   if (!p.title) return;
-  setRec({ id: newId('i'), kind: 'item', group: gid, title: p.title, details: p.details, focus: false, done: false, doneAt: null, createdAt: Date.now() });
+  const last = activeItems().filter(i => i.group === gid).reduce((m, i) => Math.max(m, typeof i.order === 'number' ? i.order : 0), 0);
+  setRec({ id: newId('i'), kind: 'item', group: gid, title: p.title, details: p.details, focus: false, done: false, doneAt: null, createdAt: Date.now(), order: last + 10 });
 }
 const isArchived = it => !!(it.archived || it.done);
 const activeItems = () => live('item').filter(i => !isArchived(i));
@@ -814,7 +824,9 @@ function restoreFocus(f) {
   try { if (f.s != null) el.setSelectionRange(f.s, f.e); } catch (e) {}
 }
 
+let renderDeferred = false;
 function render() {
+  if (drag) { renderDeferred = true; return; }
   const f = captureFocus();
   const d = new Date();
   $('#today').textContent = WEEKDAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS_GEN[d.getMonth()];
@@ -828,7 +840,7 @@ function swipeAct(id) {
   return '<div class="swipe-act"><button type="button" data-action="swipe-del" data-id="' + esc(id) + '">Удалить</button></div>';
 }
 function itemRow(it) {
-  return '<li class="swipe">' + swipeAct(it.id) + '<div class="item swipe-row' + (it.focus ? ' focus' : '') + '">' +
+  return '<li class="swipe" data-kind="item" data-id="' + esc(it.id) + '">' + swipeAct(it.id) + '<div class="item swipe-row' + (it.focus ? ' focus' : '') + '">' +
     '<button type="button" class="check' + (it.focus ? ' on' : '') + '" data-action="toggle-focus" data-id="' + esc(it.id) + '" aria-pressed="' + !!it.focus + '" aria-label="' + (it.focus ? 'Убрать из работы' : 'Взять в работу') + '" title="' + (it.focus ? 'В работе — нажмите, чтобы убрать' : 'Взять в работу') + '">' + (it.focus ? ICON.check : '') + '</button>' +
     '<div class="txt" data-action="edit-item" data-id="' + esc(it.id) + '" role="button" tabindex="0">' +
       '<span class="t">' + richText(it.title) + '</span>' +
@@ -863,20 +875,20 @@ function renderGoals() {
   let html = '';
   list.forEach(g => {
     const its = g.virtual ? orphans : items.filter(i => i.group === g.id);
-    const open = its.slice().sort((a, b) => (b.focus ? 1 : 0) - (a.focus ? 1 : 0) || (a.createdAt || 0) - (b.createdAt || 0));
+    const open = its.slice().sort(byItemOrder);
     if (ui.mode === 'focus') {
       const f = open.filter(i => i.focus);
       if (!f.length) return;
       html += '<div class="group"><div class="group-h"><h3>' + esc(g.name) + '</h3></div><ul class="items">' + f.map(itemRow).join('') + '</ul></div>';
       return;
     }
-    html += '<div class="group">' +
+    html += '<div class="group"' + (g.virtual ? '' : ' data-group="' + esc(g.id) + '"') + '>' +
       '<div class="group-h"><h3' + (g.virtual ? '' : ' data-action="edit-group" data-id="' + esc(g.id) + '" role="button" tabindex="0"') + '>' + esc(g.name) + '</h3>' +
         '<span class="cnt">' + open.length + '</span>' +
         (g.virtual ? '' : '<button type="button" class="plus-btn" data-action="add-in" data-id="' + esc(g.id) + '" aria-label="Добавить цель в группу ' + esc(g.name) + '" title="Добавить цель">' + ICON.plus + '</button>' +
           '<button type="button" class="icon-btn" data-action="edit-group" data-id="' + esc(g.id) + '" aria-label="Настроить группу">' + ICON.dots + '</button>') +
       '</div>' +
-      '<ul class="items">' + open.map(itemRow).join('') + '</ul>' +
+      '<ul class="items"' + (g.virtual ? '' : ' data-group="' + esc(g.id) + '"') + '>' + open.map(itemRow).join('') + '</ul>' +
       (!g.virtual && ui.adding === g.id ? '<form class="add-item" data-group="' + esc(g.id) + '" autocomplete="off"><span class="plus" aria-hidden="true">+</span><label class="sr" for="add-' + esc(g.id) + '">Новая цель в группе ' + esc(g.name) + '</label><input id="add-' + esc(g.id) + '" placeholder="Новая цель (уточнение в скобках)" enterkeyhint="done"></form>' : '') +
       (!open.length && ui.adding !== g.id ? '<div class="empty" style="padding:2px 0 6px">Пусто. Нажмите + справа.</div>' : '') +
     '</div>';
@@ -922,7 +934,7 @@ function renderMoney() {
       '<span>Где лежит · ' + accs.length + ' ' + plural(accs.length, ['счёт', 'счёта', 'счетов']) + '</span>' + ICON.chevron + '</button>';
   const rows = accs.map(a => {
     const n = Number(a.amount) || 0;
-    return '<div class="swipe">' + swipeAct(a.id) + '<div class="acc swipe-row" data-action="edit-account" data-id="' + esc(a.id) + '" role="button" tabindex="0">' +
+    return '<div class="swipe" data-kind="account" data-id="' + esc(a.id) + '">' + swipeAct(a.id) + '<div class="acc swipe-row" data-action="edit-account" data-id="' + esc(a.id) + '" role="button" tabindex="0">' +
       '<div class="name">' + esc(a.name) + (a.note ? '<span class="note">' + esc(a.note) + '</span>' : '') + '</div>' +
       '<div class="amt num' + (n < 0 ? ' neg' : '') + '">' + fmtMoney(n, a.cur || 'RUB') + (a.at && Date.now() - a.at >= 7 * 86400000 ? '<span class="when">обновлено ' + ago(a.at) + '</span>' : '') + '</div>' +
     '</div></div>';
@@ -1617,6 +1629,116 @@ document.addEventListener('focusout', e => {
   }, 150);
 });
 
+/* ================= Перетаскивание (мышь и долгое нажатие) ================= */
+let drag = null, pressTimer = null, mouseDown = null;
+function dragStart(box, x, y) {
+  if (!box || drag) return;
+  closeSwipe();
+  const row = box.querySelector('.swipe-row');
+  const r = row.getBoundingClientRect();
+  const ghost = row.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  ghost.style.width = r.width + 'px';
+  ghost.style.left = r.left + 'px';
+  ghost.style.top = r.top + 'px';
+  document.body.appendChild(ghost);
+  const line = document.createElement(box.tagName === 'LI' ? 'li' : 'div');
+  line.className = 'drop-line';
+  box.after(line);
+  box.classList.add('dragging');
+  document.body.classList.add('is-dragging');
+  drag = { box, kind: box.dataset.kind, id: box.dataset.id, ghost, line, dx: x - r.left, dy: y - r.top, y, raf: 0 };
+  if (navigator.vibrate) try { navigator.vibrate(15); } catch (e) {}
+  const loop = () => {
+    if (!drag) return;
+    const edge = 70;
+    if (drag.y < edge) window.scrollBy(0, -Math.ceil((edge - drag.y) / 6));
+    else if (drag.y > window.innerHeight - edge) window.scrollBy(0, Math.ceil((drag.y - window.innerHeight + edge) / 6));
+    drag.raf = requestAnimationFrame(loop);
+  };
+  drag.raf = requestAnimationFrame(loop);
+}
+function dragMove(x, y) {
+  if (!drag) return;
+  drag.y = y;
+  drag.ghost.style.left = (x - drag.dx) + 'px';
+  drag.ghost.style.top = (y - drag.dy) + 'px';
+  const el = document.elementFromPoint(Math.min(Math.max(x, 1), window.innerWidth - 2), y);
+  if (!el) return;
+  document.querySelectorAll('.group.drop-target').forEach(g => g.classList.remove('drop-target'));
+  const over = el.closest('.swipe[data-kind="' + drag.kind + '"]');
+  if (over && over !== drag.box) {
+    const r = over.getBoundingClientRect();
+    if (y < r.top + r.height / 2) over.before(drag.line); else over.after(drag.line);
+    return;
+  }
+  if (drag.kind === 'item') {
+    const g = el.closest('.group[data-group]');
+    if (g) {
+      const ul = g.querySelector('ul.items');
+      const rows = [...ul.querySelectorAll(':scope > .swipe')].filter(b => b !== drag.box);
+      if (!rows.length) { ul.appendChild(drag.line); g.classList.add('drop-target'); }
+      else if (el.closest('.group-h')) rows[0].before(drag.line);
+      else if (y > rows[rows.length - 1].getBoundingClientRect().bottom) rows[rows.length - 1].after(drag.line);
+    }
+  }
+}
+function dragEnd(cancel) {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  cancelAnimationFrame(d.raf);
+  d.ghost.remove();
+  d.box.classList.remove('dragging');
+  document.body.classList.remove('is-dragging');
+  document.querySelectorAll('.group.drop-target').forEach(g => g.classList.remove('drop-target'));
+  suppressClickUntil = Date.now() + 400;
+  const parent = d.line.parentElement;
+  const entries = [];
+  if (!cancel && parent) {
+    // порядок в целевом списке: все строки, кроме перетаскиваемой, с ней на месте линии
+    const ids = [];
+    [...parent.children].forEach(ch => {
+      if (ch === d.line) ids.push(d.id);
+      else if (ch.classList.contains('swipe') && ch.dataset.id !== d.id) ids.push(ch.dataset.id);
+    });
+    const targetGroup = d.kind === 'item' ? parent.dataset.group : null;
+    ids.forEach((id, n) => {
+      const r = getRec(id);
+      if (!r) return;
+      const patch = {};
+      if (r.order !== (n + 1) * 10) patch.order = (n + 1) * 10;
+      if (d.kind === 'item' && id === d.id && targetGroup && r.group !== targetGroup) patch.group = targetGroup;
+      if (Object.keys(patch).length) entries.push([id, Object.assign({}, r, patch)]);
+    });
+  }
+  d.line.remove();
+  renderDeferred = false;
+  if (entries.length) putMany(entries); else render();
+}
+const DRAG_SKIP = 'button, a, input, textarea, select, label, .swipe-act';
+// мышь: зажать и потянуть
+document.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const box = e.target.closest('.swipe[data-kind]');
+  if (!box || e.target.closest(DRAG_SKIP)) return;
+  mouseDown = { box, x: e.clientX, y: e.clientY };
+  e.preventDefault();
+});
+document.addEventListener('mousemove', e => {
+  if (drag) { dragMove(e.clientX, e.clientY); return; }
+  if (mouseDown && Math.hypot(e.clientX - mouseDown.x, e.clientY - mouseDown.y) > 6) {
+    dragStart(mouseDown.box, mouseDown.x, mouseDown.y);
+    mouseDown = null;
+    dragMove(e.clientX, e.clientY);
+  }
+});
+document.addEventListener('mouseup', () => {
+  mouseDown = null;
+  if (drag) dragEnd(false);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && drag) dragEnd(true); });
+
 /* ================= Свайп влево: удалить ================= */
 const SWIPE_W = 96;
 let sw = null, openSwipe = null, suppressClickUntil = 0;
@@ -1631,16 +1753,25 @@ function closeSwipe(row) {
 document.addEventListener('touchstart', e => {
   const row = e.target.closest('.swipe-row');
   if (openSwipe && openSwipe !== row && !e.target.closest('.swipe-act')) closeSwipe();
+  clearTimeout(pressTimer);
   if (!row || e.touches.length !== 1) { sw = null; return; }
   const t = e.touches[0];
   sw = { row, x0: t.clientX, y0: t.clientY, dx: 0, base: row === openSwipe ? -SWIPE_W : 0, decided: false, moving: false };
+  // долгое нажатие — перетаскивание
+  const box = row.closest('.swipe[data-kind]');
+  if (box && !e.target.closest(DRAG_SKIP) && row !== openSwipe) {
+    const x0 = t.clientX, y0 = t.clientY;
+    pressTimer = setTimeout(() => { if (sw && !sw.decided) { sw = null; dragStart(box, x0, y0); } }, 450);
+  }
 }, { passive: true });
 document.addEventListener('touchmove', e => {
+  if (drag) { e.preventDefault(); const t = e.touches[0]; dragMove(t.clientX, t.clientY); return; }
   if (!sw) return;
   const t = e.touches[0];
   const dx = t.clientX - sw.x0, dy = t.clientY - sw.y0;
   if (!sw.decided) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    clearTimeout(pressTimer);
     sw.decided = true;
     sw.moving = Math.abs(dx) > Math.abs(dy) * 1.2 && (dx < 0 || sw.base < 0);
     if (sw.moving) sw.row.closest('.swipe').classList.add('moving');
@@ -1653,6 +1784,8 @@ document.addEventListener('touchmove', e => {
   sw.row.style.transform = 'translateX(' + x + 'px)';
 }, { passive: false });
 document.addEventListener('touchend', () => {
+  clearTimeout(pressTimer);
+  if (drag) { dragEnd(false); return; }
   if (!sw) return;
   const s = sw; sw = null;
   if (!s.moving) return;
@@ -1667,7 +1800,9 @@ document.addEventListener('touchend', () => {
     closeSwipe(s.row);
   }
 });
-document.addEventListener('touchcancel', () => { if (sw && sw.moving) closeSwipe(sw.row); sw = null; });
+document.addEventListener('touchcancel', () => { clearTimeout(pressTimer); if (drag) dragEnd(true); if (sw && sw.moving) closeSwipe(sw.row); sw = null; });
+// iOS: не показывать меню «Скопировать» при долгом нажатии на строку
+document.addEventListener('contextmenu', e => { if (e.target.closest('.swipe-row')) e.preventDefault(); });
 
 window.addEventListener('storage', e => {
   if (e.key === LS_DATA) { state = loadState(); render(); }
