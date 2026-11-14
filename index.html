@@ -680,20 +680,44 @@ function moveRec(id, dir, list) {
   const oa = a.order || i + 1, ob = b.order || j + 1;
   putMany([[a.id, Object.assign({}, a, { order: ob === oa ? oa + dir : ob })], [b.id, Object.assign({}, b, { order: oa })]]);
 }
+/* Разбор текста из заметок.
+   Блоки разделены пустой строкой; первая строка блока — группа, остальные — цели.
+   «★» в начале строки — цель в работе. Блок «Деньги» (или «Счета») — счета вида «Карта — 85000 ₽». */
+const CUR_ALIASES = { '₽': 'RUB', 'руб': 'RUB', 'руб.': 'RUB', 'р': 'RUB', 'р.': 'RUB', 'rub': 'RUB', '$': 'USD', 'usd': 'USD', '€': 'EUR', 'eur': 'EUR', '₺': 'TRY', 'try': 'TRY', '¥': 'CNY', 'cny': 'CNY', '£': 'GBP', 'gbp': 'GBP' };
+function parseAccountLine(line) {
+  const m = line.match(/^(.+?)\s*(?:[—–:]|\s-\s)\s*([−\-]?[\d\s\u00a0.,]+?)\s*(₽|руб\.?|р\.?|RUB|USD|EUR|TRY|CNY|GBP|\$|€|₺|¥|£)?\s*$/i);
+  if (!m) return null;
+  const amount = evalAmount(m[2]);
+  if (amount === null) return null;
+  const cur = m[3] ? (CUR_ALIASES[m[3].toLowerCase()] || m[3].toUpperCase()) : null;
+  return { name: m[1].trim(), amount, cur: CURRENCIES[cur] ? cur : null };
+}
 function parseOutline(text) {
   const blocks = String(text || '').replace(/\r/g, '').split(/\n\s*\n/);
-  const out = [];
+  const groupsOut = [], accountsOut = [];
+  const bullet = /^([-•*·–]|\d+[.)])\s*/;
   blocks.forEach(b => {
     const lines = b.split('\n').map(l => l.trim()).filter(Boolean);
     if (!lines.length) return;
-    const bullet = /^([-•*·–]|\d+[.)])\s*/;
     let name, rest;
-    if (bullet.test(lines[0])) { name = 'Разное'; rest = lines; }
-    else { name = lines[0].replace(/^#+\s*/, '').replace(/:$/, ''); rest = lines.slice(1); }
-    out.push({ name, items: rest.map(l => l.replace(bullet, '').trim()).filter(Boolean) });
+    if (bullet.test(lines[0]) || /^[★☆]/.test(lines[0])) { name = 'Разное'; rest = lines; }
+    else { name = lines[0].replace(/^#+\s*/, '').replace(/\s*:\s*$/, '').trim(); rest = lines.slice(1); }
+    if (/^(деньги|счета|счёта|money)$/i.test(name)) {
+      rest.forEach(l => { const a = parseAccountLine(l.replace(bullet, '')); if (a) accountsOut.push(a); });
+      return;
+    }
+    groupsOut.push({
+      name,
+      items: rest.map(l => {
+        l = l.replace(bullet, '').trim();
+        const focus = /^★/.test(l);
+        return { text: l.replace(/^[★☆]\s*/, '').trim(), focus };
+      }).filter(x => x.text)
+    });
   });
-  return out;
+  return { groups: groupsOut, accounts: accountsOut };
 }
+const normName = s => String(s || '').toLowerCase().replace(/[\s_:.,\-–—]+/g, '');
 function totals() {
   const by = {};
   accounts().forEach(a => { const c = a.cur || 'RUB'; by[c] = (by[c] || 0) + (Number(a.amount) || 0); });
@@ -899,7 +923,7 @@ function importSheet() {
   openSheet('import',
     '<h2>Вставить список</h2>' +
     '<form class="form" id="fImport" autocomplete="off">' +
-      '<p class="hint">Скопируйте текст из заметок. Первая строка каждого блока станет группой, остальные строки — целями. Блоки разделяйте пустой строкой. Текст в скобках станет уточнением.</p>' +
+      '<p class="hint">Скопируйте текст из заметок. Первая строка каждого блока станет группой, остальные строки — целями. Блоки разделяйте пустой строкой. Текст в скобках станет уточнением, <code>★</code> в начале строки — отметка «в работе». Блок с заголовком <code>Деньги</code> добавит счета: <code>Карта — 85000 ₽</code>. Повторы не дублируются.</p>' +
       '<textarea class="inp" id="fText" rows="10" placeholder="Обучение&#10;Написать введение (литература, план)&#10;&#10;Работа&#10;Проект А (чертежи, расчёты)&#10;Проект Б"></textarea>' +
       '<div class="actions"><div class="r"><button type="button" class="btn" data-action="close-sheet">Отмена</button><button type="submit" class="btn primary">Добавить</button></div></div>' +
     '</form>', '#fText');
@@ -1105,31 +1129,56 @@ document.addEventListener('submit', e => {
 
   if (f.id === 'fImport') {
     const parsed = parseOutline($('#fText').value);
-    const itemsTotal = parsed.reduce((n, g) => n + g.items.length, 0);
-    if (!parsed.length) { $('#fText').classList.add('err'); return; }
-    const existing = groups();
-    let order = nextOrder('group');
+    if (!parsed.groups.length && !parsed.accounts.length) { $('#fText').classList.add('err'); return; }
+    const existingGroups = groups();
+    const existingItems = live('item');
+    const existingAccs = accounts();
+    let gOrder = nextOrder('group'), aOrder = nextOrder('account');
     const entries = [];
-    let newGroups = 0;
-    parsed.forEach(pg => {
-      let g = existing.find(x => x.name.trim().toLowerCase() === pg.name.trim().toLowerCase());
+    let newGroups = 0, newItems = 0, newAccs = 0, updAccs = 0, updItems = 0;
+    const now = Date.now();
+    parsed.groups.forEach(pg => {
+      const g = existingGroups.find(x => normName(x.name) === normName(pg.name));
       let gid;
       if (g) gid = g.id;
       else {
         gid = newId('g');
-        entries.push([gid, { kind: 'group', name: pg.name, order: order++, createdAt: Date.now() }]);
+        entries.push([gid, { kind: 'group', name: pg.name, order: gOrder++, createdAt: now }]);
         newGroups++;
       }
-      pg.items.forEach((line, k) => {
-        const p = splitTitle(line);
+      pg.items.forEach((it, k) => {
+        const p = splitTitle(it.text);
         if (!p.title) return;
-        entries.push([newId('i') + k, { kind: 'item', group: gid, title: p.title, details: p.details, focus: false, done: false, doneAt: null, createdAt: Date.now() + k }]);
+        const same = existingItems.find(x => x.group === gid && normName(x.title) === normName(p.title));
+        if (same) {
+          // уже есть: только отмечаем «в работе», если это указано
+          if (it.focus && !same.focus && !same.done) { entries.push([same.id, Object.assign({}, same, { focus: true })]); updItems++; }
+          return;
+        }
+        entries.push([newId('i') + k, { kind: 'item', group: gid, title: p.title, details: p.details, focus: it.focus, done: false, doneAt: null, createdAt: now + k }]);
+        newItems++;
       });
+    });
+    parsed.accounts.forEach((a, k) => {
+      const same = existingAccs.find(x => normName(x.name) === normName(a.name));
+      if (same) {
+        const cur = a.cur || same.cur || 'RUB';
+        if (same.amount !== a.amount || same.cur !== cur) { entries.push([same.id, Object.assign({}, same, { amount: a.amount, cur, at: now })]); updAccs++; }
+        return;
+      }
+      entries.push([newId('a') + k, { kind: 'account', name: a.name, amount: a.amount, cur: a.cur || settings().base || 'RUB', note: '', order: aOrder++, createdAt: now + k, at: now }]);
+      newAccs++;
     });
     closeSheet();
     if (ui.mode !== 'all') { ui.mode = 'all'; saveUi(); }
+    const parts = [];
+    if (newGroups) parts.push('групп ' + newGroups);
+    if (newItems) parts.push('целей ' + newItems);
+    if (newAccs) parts.push('счетов ' + newAccs);
+    const upd = updAccs + updItems;
+    if (!entries.length) { toast('Всё это уже есть в органайзере'); return; }
     const ids = entries.map(x => x[0]);
-    withUndo(ids, 'Добавлено: групп ' + newGroups + ', целей ' + itemsTotal, () => putMany(entries));
+    withUndo(ids, (parts.length ? 'Добавлено: ' + parts.join(', ') : 'Готово') + (upd ? ' · обновлено: ' + upd : ''), () => putMany(entries));
     return;
   }
 
@@ -1192,27 +1241,38 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
 
 /* ================= Запуск ================= */
-async function init() {
-  let setupFromLink = null;
-  let importFromLink = '';
+/* Ссылки вида #setup=… (подключение) и #import=… (готовый список) */
+function readHashLink() {
   const h = location.hash.slice(1);
+  let setup = null, imp = '';
   if (h.indexOf('setup=') === 0) {
-    try { const c = JSON.parse(b64urlDecode(h.slice(6))); if (c && c.url && c.key) setupFromLink = c; } catch (e) {}
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    try { const c = JSON.parse(b64urlDecode(h.slice(6))); if (c && c.url && c.key) setup = c; } catch (e) {}
   } else if (h.indexOf('import=') === 0) {
-    try { importFromLink = b64urlDecode(h.slice(7)); } catch (e) {}
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
-  }
+    try { imp = b64urlDecode(h.slice(7)); } catch (e) {}
+  } else return null;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  return { setup, imp };
+}
+function openImportWith(text) {
+  importSheet();
+  const ta = $('#fText');
+  if (ta) ta.value = text;
+}
+window.addEventListener('hashchange', () => {
+  const link = readHashLink();
+  if (!link) return;
+  if (link.imp) openImportWith(link.imp);
+  if (link.setup) connect(link.setup.url, link.setup.key);
+});
+
+async function init() {
+  const link = readHashLink();
   render();
-  if (importFromLink) {
-    importSheet();
-    const ta = $('#fText');
-    if (ta) ta.value = importFromLink;
-  }
+  if (link && link.imp) openImportWith(link.imp);
   setSync(configured() ? 'ok' : 'off');
 
   if (autoRates()) fetchFx(false);
-  if (setupFromLink) await connect(setupFromLink.url, setupFromLink.key);
+  if (link && link.setup) await connect(link.setup.url, link.setup.key);
   else sync();
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
