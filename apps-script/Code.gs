@@ -29,7 +29,8 @@ const TOMBSTONE_TTL_DAYS = 180; // сколько дней помнить об �
 const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx', 'log', 'project'];
 
 // --- Таймшит ---
-const TS_FOLDER = 'Таймшиты';               // папка внутри «Органайзер»
+const TS_FOLDER = 'Таймшиты';               // папка внутри «Органайзер» для рабочих Google-таблиц
+const TS_EXPORT_FOLDER = 'Отчеты для Эрика'; // сюда кладётся готовый .xlsx (папка синхронизируется с компьютером)
 const TS_TEMPLATE = 'Timesheet_template';   // таблица-образец (Google Таблица)
 const TS_USER = 'Sergey Korobkov';          // как в названии файла
 const TS_SLOTS = { 1: '9:00-13:00', 2: '13:30-17:30' };
@@ -401,6 +402,16 @@ function tsFolder_() {
   return it.hasNext() ? it.next() : parent.createFolder(TS_FOLDER);
 }
 
+/** Папка для .xlsx: «Отчеты для Эрика», если она есть на Диске, иначе — папка таймшитов. */
+function exportFolder_() {
+  const it = DriveApp.getFoldersByName(TS_EXPORT_FOLDER);
+  while (it.hasNext()) {
+    const f = it.next();
+    if (!f.isTrashed()) return f;
+  }
+  return tsFolder_();
+}
+
 function findSheet_(folder, name) {
   const it = folder ? folder.getFilesByName(name) : DriveApp.getFilesByName(name);
   while (it.hasNext()) {
@@ -488,11 +499,12 @@ function rebuildWeek_(db, monday) {
   const blob = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + file.getId() + '/export?format=xlsx', {
     headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
   }).getBlob().setName(name + '.xlsx');
-  const old = folder.getFilesByName(name + '.xlsx');
+  const out = exportFolder_();
+  const old = out.getFilesByName(name + '.xlsx');
   while (old.hasNext()) old.next().setTrashed(true);
-  const xlsx = folder.createFile(blob);
+  const xlsx = out.createFile(blob);
 
-  return setTsRecord_(db, monday, { name: name, sheetUrl: ss.getUrl(), xlsxUrl: xlsx.getUrl(), folderUrl: folder.getUrl() });
+  return setTsRecord_(db, monday, { name: name, sheetUrl: ss.getUrl(), xlsxUrl: xlsx.getUrl(), folderUrl: out.getUrl() });
 }
 
 function readDb_(file) {
