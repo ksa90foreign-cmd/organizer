@@ -117,6 +117,11 @@ a{color:var(--accent)}
 .work.closed #tsLinks{display:none}
 .work #workH{cursor:pointer;user-select:none}
 .work-toggle svg{transition:transform .2s ease}
+.log-toggle{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;background:none;border:0;padding:6px 0 2px;color:var(--muted);font-size:13.5px;cursor:pointer;text-align:left}
+.log-toggle:hover{color:var(--ink)}
+.log-toggle svg{width:18px;height:18px;flex:0 0 auto;margin-right:6px;transition:transform .2s ease}
+.log-toggle[aria-expanded="true"] svg{transform:rotate(45deg)}
+#logItems{margin-top:4px}
 .work-toggle[aria-expanded="true"] svg{transform:rotate(45deg)}
 .log-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .log-date{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:4px 8px;font-size:14px;color:var(--muted);min-width:0}
@@ -965,7 +970,7 @@ function renderGoals() {
 
 /* ---------- Работа (таймшит) ---------- */
 const DAY_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-const workUi = { slot: null, date: null, project: null, open: false };
+const workUi = { slot: null, date: null, project: null, open: false, listOpen: false };
 const projects = () => live('project').sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || (a.createdAt || 0) - (b.createdAt || 0));
 const projLabel = p => [p.code, p.name].filter(Boolean).join(' · ') || 'Без названия';
 function currentProject() {
@@ -1035,8 +1040,13 @@ function renderWork() {
       items.map(logRow).join('');
   });
   const wkNum = Math.ceil(parseYmdLocal(mon).getDate() / 7);
+  const listOpen = !!workUi.listOpen;
   $('#logList').innerHTML = html
-    ? html + (ts && ts.error ? '<p class="hint" style="color:var(--danger);margin-top:8px">' + tsErrorText(ts.error) + '</p>' : '')
+    ? '<button type="button" class="log-toggle" data-action="log-list-toggle" aria-expanded="' + listOpen + '" aria-controls="logItems">' +
+        '<span>Записи за неделю (wk' + wkNum + ') · ' + logs.length + '</span>' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>' +
+      '<div id="logItems"' + (listOpen ? '' : ' hidden') + '>' + html + '</div>' +
+      (ts && ts.error ? '<p class="hint" style="color:var(--danger);margin-top:8px">' + tsErrorText(ts.error) + '</p>' : '')
     : '<div class="empty">За эту неделю (wk' + wkNum + ') записей нет. Выберите половину дня и напишите, что сделали: запись переведётся на английский и попадёт в таймшит недели.</div>';
 }
 function projectSheet(id) {
@@ -1550,6 +1560,7 @@ document.addEventListener('click', e => {
       workUi.open = !workUi.open; renderWork();
       if (workUi.open) { const i = $('#logText'); if (i && window.matchMedia('(min-width: 640px)').matches) i.focus(); }
       break;
+    case 'log-list-toggle': workUi.listOpen = !workUi.listOpen; renderWork(); break;
     case 'log-slot': workUi.slot = Number(el.dataset.slot); renderWork(); { const i = $('#logText'); if (i && window.matchMedia('(min-width: 640px)').matches) i.focus(); } break;
     case 'edit-log': logSheet(id); break;
     case 'edit-project': { const p = currentProject(); projectSheet(p ? p.id : null); break; }
