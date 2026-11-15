@@ -1,6 +1,6 @@
 /* Органайзер — service worker: работа без интернета.
    При обновлении index.html увеличьте номер версии ниже. */
-const VERSION = 'organizer-v15';
+const VERSION = 'organizer-v16';
 const SHELL = [
   './',
   'index.html',
@@ -14,7 +14,8 @@ const CACHE_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 const NAV_TIMEOUT = 4000; // сколько ждать сеть, прежде чем открыть сохранённую версию
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' — мимо кэша браузера, иначе GitHub Pages до 10 минут отдаёт старую страницу
+  event.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
@@ -40,7 +41,8 @@ self.addEventListener('fetch', event => {
   // Страница: сначала сеть (чтобы получать обновления), но не дольше NAV_TIMEOUT —
   // иначе открываем сохранённую версию, а свежая подтянется в фоне
   if (req.mode === 'navigate') {
-    const network = fetch(req).then(res => {
+    // no-cache: браузер всегда сверяется с сервером, а не берёт страницу из своего кэша
+    const network = fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }).then(res => {
       if (res && res.ok) {
         const copy = res.clone();
         caches.open(VERSION).then(c => c.put('index.html', copy));
