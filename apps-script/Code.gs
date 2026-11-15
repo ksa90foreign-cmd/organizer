@@ -26,14 +26,15 @@ const FOLDER_NAME = 'Органайзер';
 const FILE_NAME = 'organizer-data.json';
 const INBOX_PREFIX = 'organizer-inbox';
 const TOMBSTONE_TTL_DAYS = 180; // сколько дней помнить об удалённых записях
-const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx', 'log'];
+const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx', 'log', 'project'];
 
 // --- Таймшит ---
 const TS_FOLDER = 'Таймшиты';               // папка внутри «Органайзер»
 const TS_TEMPLATE = 'Timesheet_template';   // таблица-образец (Google Таблица)
 const TS_USER = 'Sergey Korobkov';          // как в названии файла
 const TS_SLOTS = { 1: '9:00-13:00', 2: '13:30-17:30' };
-const TS_ROWS = { 1: 7, 2: 8 };             // строки утра и дня, текст в столбце C
+const TS_ROWS = { 1: 7, 2: 8 };             // строки утра и дня первого проекта, текст в столбце C
+const TS_MAX_PROJECTS = 6;                  // проекты дня: строки 7–8, 9–10 … 17–18
 const DAYS_EN = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const MONTHS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const ID_RE = /^[A-Za-z0-9_\-.~:@+]{1,200}$/;
@@ -455,10 +456,29 @@ function rebuildWeek_(db, monday) {
     sh.getRange('B3').setNumberFormat('@').setValue(('0' + d.getUTCDate()).slice(-2) + '.' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '.' + d.getUTCFullYear());
     const day = logs.filter(function (r) { return r.date === ymd; })
       .sort(function (a, b) { return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0); });
-    [1, 2].forEach(function (slot) {
-      const texts = day.filter(function (r) { return Number(r.slot) === slot; })
-        .map(function (r) { return String(r.en || r.text || '').trim(); }).filter(Boolean);
-      sh.getRange(TS_ROWS[slot], 3).setValue(TS_SLOTS[slot] + (texts.length ? ' ' + texts.join('; ') : ''));
+
+    // проекты дня в порядке первой записи; без проекта — строки 7/8 с номером и названием из образца
+    const projects = [], index = {};
+    day.forEach(function (r) {
+      const key = (r.pcode || r.pname) ? (String(r.pcode || '') + '|' + String(r.pname || '')) : '';
+      if (!(key in index)) { index[key] = projects.length; projects.push({ key: key, code: r.pcode || '', name: r.pname || '', items: [] }); }
+      projects[index[key]].items.push(r);
+    });
+    if (!projects.length) projects.push({ key: '', items: [] });
+
+    // дополнительные строки проектов (9–18) очищаем и заполняем заново
+    sh.getRange(TS_ROWS[1] + 2, 1, (TS_MAX_PROJECTS - 1) * 2, 3).clearContent();
+    projects.slice(0, TS_MAX_PROJECTS).forEach(function (p, k) {
+      [1, 2].forEach(function (slot) {
+        const row = TS_ROWS[slot] + 2 * k;
+        const texts = p.items.filter(function (r) { return Number(r.slot) === slot; })
+          .map(function (r) { return String(r.en || r.text || '').trim(); }).filter(Boolean);
+        if (p.key) {
+          sh.getRange(row, 1).setValue(p.code);
+          sh.getRange(row, 2).setValue(p.name);
+        }
+        sh.getRange(row, 3).setValue(TS_SLOTS[slot] + (texts.length ? ' ' + texts.join('; ') : ''));
+      });
     });
     if (fresh) sh.getRange(TS_ROWS[1], 4, 2, 7).clearContent(); // часы D:J утра и дня
   });

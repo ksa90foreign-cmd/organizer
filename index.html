@@ -114,6 +114,9 @@ a{color:var(--accent)}
 .log-form{display:grid;gap:8px;margin-bottom:6px}
 .log-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .log-date{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:4px 8px;font-size:14px;color:var(--muted);min-width:0}
+.log-proj-row{display:flex;align-items:center;gap:4px}
+.log-proj{flex:1;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 8px;font-size:14px;color:var(--ink)}
+.log-proj-row .icon-btn{width:30px;height:30px}
 .log-in{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--line)}
 .log-in:focus-within{border-bottom-color:var(--accent)}
 .log-in input{flex:1;min-width:0;border:0;background:none;padding:8px 0;font-size:16px;outline:none}
@@ -123,6 +126,7 @@ a{color:var(--accent)}
 .log-row{display:flex;gap:10px;align-items:flex-start;padding:7px 0}
 .log-slot{flex:0 0 44px;text-align:center;font-family:var(--font-num);font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:1px 0;margin-top:2px}
 .log-row .txt .en{display:block;font-size:13px;color:var(--muted);margin-top:1px}
+.log-row .txt .pj{display:inline-block;font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-right:6px;vertical-align:1px}
 .log-row .txt .en.wait{font-style:italic;color:var(--faint)}
 .ts-link{font-size:13px;color:var(--accent);text-decoration:none;white-space:nowrap}
 .ts-link:hover{text-decoration:underline}
@@ -323,6 +327,11 @@ select.inp{appearance:auto}
           <label class="sr" for="logDate">Дата</label>
           <input type="date" id="logDate" class="log-date">
         </div>
+        <div class="log-proj-row">
+          <label class="sr" for="logProject">Проект</label>
+          <select id="logProject" class="log-proj"></select>
+          <button type="button" class="icon-btn" data-action="edit-project" aria-label="Изменить проект" title="Изменить проект"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg></button>
+        </div>
         <div class="log-in">
           <label class="sr" for="logText">Что сделал</label>
           <input id="logText" placeholder="Что сделал (по-русски)" enterkeyhint="send">
@@ -360,7 +369,7 @@ select.inp{appearance:auto}
 /* ================= Справочники ================= */
 const CURRENCIES = { RUB: '₽', EUR: '€', USD: '$', TRY: '₺', CNY: '¥', GBP: '£' };
 const CUR_NAMES = { RUB: 'Рубли', EUR: 'Евро', USD: 'Доллары', TRY: 'Лиры', CNY: 'Юани', GBP: 'Фунты' };
-const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx', 'log'];
+const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx', 'log', 'project'];
 const MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
 const WEEKDAYS = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'];
 const LS_DATA = 'organizer.data.v2';
@@ -945,7 +954,18 @@ function renderGoals() {
 
 /* ---------- Работа (таймшит) ---------- */
 const DAY_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-const workUi = { slot: null, date: null };
+const workUi = { slot: null, date: null, project: null };
+const projects = () => live('project').sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || (a.createdAt || 0) - (b.createdAt || 0));
+const projLabel = p => [p.code, p.name].filter(Boolean).join(' · ') || 'Без названия';
+function currentProject() {
+  const list = projects();
+  if (workUi.project && getRec(workUi.project)) return getRec(workUi.project);
+  // по умолчанию — проект последней записи
+  const last = live('log').filter(l => l.project && getRec(l.project)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  const p = last ? getRec(last.project) : list[0] || null;
+  workUi.project = p ? p.id : null;
+  return p;
+}
 function parseYmdLocal(s) { const p = s.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); }
 function mondayOf(ymdStr) { const d = parseYmdLocal(ymdStr); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymd(d); }
 function defaultSlot() { return new Date().getHours() < 14 ? 1 : 2; }
@@ -953,7 +973,7 @@ function logRow(l) {
   return '<div class="swipe" data-kind="log" data-id="' + esc(l.id) + '">' + swipeAct(l.id) +
     '<div class="log-row swipe-row" data-action="edit-log" data-id="' + esc(l.id) + '" role="button" tabindex="0">' +
       '<span class="log-slot">' + (Number(l.slot) === 2 ? '13:30' : '9:00') + '</span>' +
-      '<div class="txt"><span class="t">' + esc(l.text) + '</span>' +
+      '<div class="txt"><span class="t">' + (l.pname || l.pcode ? '<span class="pj">' + esc(l.pname || l.pcode) + '</span>' : '') + esc(l.text) + '</span>' +
         (l.en ? '<span class="en">' + esc(l.en) + '</span>' : '<span class="en wait">' + (configured() ? 'перевод появится после синхронизации' : 'перевод — после подключения Google Диска') + '</span>') +
       '</div></div></div>';
 }
@@ -962,6 +982,13 @@ function renderWork() {
   if (!workUi.slot) workUi.slot = defaultSlot();
   const di = $('#logDate');
   if (di && document.activeElement !== di) di.value = workUi.date;
+  const sel = $('#logProject');
+  if (sel && document.activeElement !== sel) {
+    const cur = currentProject();
+    sel.innerHTML = projects().map(p => '<option value="' + esc(p.id) + '"' + (cur && cur.id === p.id ? ' selected' : '') + '>' + esc(projLabel(p)) + '</option>').join('') +
+      (projects().length ? '' : '<option value="" selected>Проект не выбран</option>') +
+      '<option value="__new">+ Новый проект…</option>';
+  }
   $('#slot1').classList.toggle('on', workUi.slot === 1);
   $('#slot2').classList.toggle('on', workUi.slot === 2);
   $('#slot1').setAttribute('aria-pressed', workUi.slot === 1);
@@ -989,6 +1016,18 @@ function renderWork() {
     ? html + (ts && ts.error ? '<p class="hint" style="color:var(--danger);margin-top:8px">Таблица не обновилась: ' + esc(ts.error) + '</p>' : '')
     : '<div class="empty">За эту неделю (wk' + wkNum + ') записей нет. Выберите половину дня и напишите, что сделали: запись переведётся на английский и попадёт в таймшит недели.</div>';
 }
+function projectSheet(id) {
+  const p = id ? getRec(id) : { code: '', name: '' };
+  if (!p) return;
+  openSheet('project',
+    '<h2>' + (id ? 'Проект' : 'Новый проект') + '</h2>' +
+    '<form class="form" id="fProject" data-id="' + esc(id || '') + '" autocomplete="off">' +
+      '<label>Номер проекта<input class="inp num" id="fPCode" placeholder="Например: DBTOO0021" value="' + esc(p.code) + '" autocapitalize="characters" spellcheck="false"></label>' +
+      '<label>Название (как в таблице, по-английски)<input class="inp" id="fPName" placeholder="Например: Krivokolenniy" value="' + esc(p.name) + '" spellcheck="false"></label>' +
+      (id ? '<p class="hint">Новые номер и название подставятся и в уже сделанные записи этого проекта.</p>' : '') +
+      actionsHtml('delete-project', id) +
+    '</form>', '#fPCode');
+}
 function logSheet(id) {
   const l = getRec(id); if (!l) return;
   openSheet('log',
@@ -998,6 +1037,7 @@ function logSheet(id) {
       (l.en ? '<p class="hint">По-английски: ' + esc(l.en) + '</p>' : '') +
       '<div class="row2"><label>Дата<input class="inp" type="date" id="fLogDate" value="' + esc(l.date) + '"></label>' +
       '<label>Время<select class="inp" id="fLogSlot"><option value="1"' + (Number(l.slot) === 1 ? ' selected' : '') + '>9:00–13:00</option><option value="2"' + (Number(l.slot) === 2 ? ' selected' : '') + '>13:30–17:30</option></select></label></div>' +
+      '<label>Проект<select class="inp" id="fLogProject"><option value="">Без проекта</option>' + projects().map(p => '<option value="' + esc(p.id) + '"' + (l.project === p.id ? ' selected' : '') + '>' + esc(projLabel(p)) + '</option>').join('') + '</select></label>' +
       actionsHtml('delete-log', id) +
     '</form>', '#fLogText');
 }
@@ -1485,6 +1525,13 @@ document.addEventListener('click', e => {
     case 'toggle-focus': toggle(id, 'focus'); break;
     case 'log-slot': workUi.slot = Number(el.dataset.slot); renderWork(); { const i = $('#logText'); if (i && window.matchMedia('(min-width: 640px)').matches) i.focus(); } break;
     case 'edit-log': logSheet(id); break;
+    case 'edit-project': { const p = currentProject(); projectSheet(p ? p.id : null); break; }
+    case 'delete-project': {
+      closeSheet();
+      if (workUi.project === id) workUi.project = null;
+      withUndo([id], 'Проект удалён (записи в отчёте остались)', () => delRec(id));
+      break;
+    }
     case 'delete-log': closeSheet(); withUndo([id], 'Запись удалена', () => delRec(id)); break;
     case 'open-archive': archiveSheet(); break;
     case 'restore-item': restoreItem(id); toast('Цель возвращена'); archiveSheet(); break;
@@ -1667,15 +1714,42 @@ document.addEventListener('submit', e => {
     const text = inp.value.trim();
     if (!text) { inp.focus(); return; }
     inp.value = '';
-    setRec({ id: newId('l'), kind: 'log', date: workUi.date || ymd(), slot: workUi.slot || defaultSlot(), text, createdAt: Date.now() });
+    const pr = currentProject();
+    const rec = { id: newId('l'), kind: 'log', date: workUi.date || ymd(), slot: workUi.slot || defaultSlot(), text, createdAt: Date.now() };
+    if (pr) Object.assign(rec, { project: pr.id, pcode: pr.code || '', pname: pr.name || '' });
+    putMany([[rec.id, rec]].concat(pr ? [[pr.id, Object.assign({}, pr, { lastUsed: Date.now() })]] : []));
     scheduleSync(300);
+    return;
+  }
+
+  if (f.id === 'fProject') {
+    const code = $('#fPCode').value.trim(), name = $('#fPName').value.trim();
+    if (!code && !name) { $('#fPCode').classList.add('err'); return; }
+    const id = f.dataset.id;
+    closeSheet();
+    const ex = id && getRec(id);
+    if (ex) {
+      const entries = [[id, Object.assign({}, ex, { code, name })]];
+      if (ex.code !== code || ex.name !== name) {
+        live('log').filter(l => l.project === id).forEach(l => entries.push([l.id, Object.assign({}, l, { pcode: code, pname: name })]));
+      }
+      putMany(entries);
+    } else {
+      const nid = newId('p');
+      setRec({ id: nid, kind: 'project', code, name, createdAt: Date.now(), lastUsed: Date.now() });
+      workUi.project = nid;
+      renderWork();
+    }
     return;
   }
 
   if (f.id === 'fLog') {
     const ex = getRec(f.dataset.id); if (!ex) { closeSheet(); return; }
     const text = $('#fLogText').value.trim(); if (!text) return;
-    const patch = { text, date: $('#fLogDate').value || ex.date, slot: Number($('#fLogSlot').value) || ex.slot };
+    const pid = $('#fLogProject').value;
+    const pr = pid ? getRec(pid) : null;
+    const patch = { text, date: $('#fLogDate').value || ex.date, slot: Number($('#fLogSlot').value) || ex.slot,
+      project: pr ? pr.id : null, pcode: pr ? (pr.code || '') : '', pname: pr ? (pr.name || '') : '' };
     closeSheet();
     setRec(Object.assign({}, ex, patch));
     return;
@@ -1743,6 +1817,13 @@ document.addEventListener('submit', e => {
 document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('err')) e.target.classList.remove('err'); });
 document.addEventListener('change', e => {
   if (e.target.id === 'logDate') { workUi.date = e.target.value || ymd(); renderWork(); return; }
+  if (e.target.id === 'logProject') {
+    if (e.target.value === '__new') { e.target.blur(); projectSheet(null); renderWork(); return; }
+    workUi.project = e.target.value || null;
+    e.target.blur();
+    renderWork();
+    return;
+  }
   if (e.target.id === 'scanFile' && e.target.files && e.target.files[0]) { runScan(e.target.files[0]); return; }
   if (e.target.id === 'fAuto') { $('#fxAutoBox').hidden = !e.target.checked; $('#fxManualBox').hidden = e.target.checked; }
 });
