@@ -500,8 +500,15 @@ function rebuildWeek_(db, monday) {
     headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
   }).getBlob().setName(name + '.xlsx');
   const out = exportFolder_();
+  // файл с таким же названием: если неделю собираем впервые — это ваш исходный файл,
+  // его не удаляем, а переименовываем; иначе это наша прошлая версия — в корзину
+  const ours = !!(db.records['ts-' + monday] && db.records['ts-' + monday].xlsxUrl);
   const old = out.getFilesByName(name + '.xlsx');
-  while (old.hasNext()) old.next().setTrashed(true);
+  while (old.hasNext()) {
+    const f = old.next();
+    if (ours) f.setTrashed(true);
+    else f.setName(name + ' (до органайзера).xlsx');
+  }
   const xlsx = out.createFile(blob);
 
   return setTsRecord_(db, monday, { name: name, sheetUrl: ss.getUrl(), xlsxUrl: xlsx.getUrl(), folderUrl: out.getUrl() });
