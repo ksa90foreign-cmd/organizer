@@ -112,6 +112,12 @@ a{color:var(--accent)}
 .side{display:grid;gap:16px;align-content:start;min-width:0}
 /* Работа (таймшит) */
 .log-form{display:grid;gap:8px;margin-bottom:6px}
+.work.closed{padding-bottom:14px}
+.work.closed .sec-h{margin-bottom:0}
+.work.closed #tsLinks{display:none}
+.work #workH{cursor:pointer;user-select:none}
+.work-toggle svg{transition:transform .2s ease}
+.work-toggle[aria-expanded="true"] svg{transform:rotate(45deg)}
 .log-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .log-date{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:4px 8px;font-size:14px;color:var(--muted);min-width:0}
 .log-proj-row{display:flex;align-items:center;gap:4px}
@@ -313,11 +319,15 @@ select.inp{appearance:auto}
     </section>
 
     <div class="side">
-    <section class="panel work" aria-labelledby="workH">
+    <section class="panel work closed" id="work" aria-labelledby="workH">
       <div class="sec-h">
-        <h2 id="workH">Работа</h2>
-        <div class="r" id="tsLinks"></div>
+        <h2 id="workH" data-action="work-toggle">Отчёт</h2>
+        <div class="r">
+          <span id="tsLinks"></span>
+          <button type="button" class="plus-btn work-toggle" id="workToggle" data-action="work-toggle" aria-expanded="false" aria-controls="workBody" aria-label="Открыть отчёт" title="Открыть отчёт"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        </div>
       </div>
+      <div id="workBody" hidden>
       <form id="logForm" class="log-form" autocomplete="off">
         <div class="log-top">
           <div class="seg" role="group" aria-label="Половина дня">
@@ -339,6 +349,7 @@ select.inp{appearance:auto}
         </div>
       </form>
       <div id="logList"></div>
+      </div>
     </section>
 
     <section class="panel money" aria-labelledby="moneyH">
@@ -954,7 +965,7 @@ function renderGoals() {
 
 /* ---------- Работа (таймшит) ---------- */
 const DAY_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-const workUi = { slot: null, date: null, project: null };
+const workUi = { slot: null, date: null, project: null, open: false };
 const projects = () => live('project').sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || (a.createdAt || 0) - (b.createdAt || 0));
 const projLabel = p => [p.code, p.name].filter(Boolean).join(' · ') || 'Без названия';
 function currentProject() {
@@ -978,6 +989,13 @@ function logRow(l) {
       '</div></div></div>';
 }
 function renderWork() {
+  const open = !!workUi.open;
+  $('#work').classList.toggle('closed', !open);
+  $('#workBody').hidden = !open;
+  const wt = $('#workToggle');
+  wt.setAttribute('aria-expanded', open);
+  wt.setAttribute('aria-label', open ? 'Свернуть отчёт' : 'Открыть отчёт');
+  wt.title = open ? 'Свернуть' : 'Открыть отчёт';
   if (!workUi.date) workUi.date = ymd();
   if (!workUi.slot) workUi.slot = defaultSlot();
   const di = $('#logDate');
@@ -1523,6 +1541,10 @@ document.addEventListener('click', e => {
       break;
     }
     case 'toggle-focus': toggle(id, 'focus'); break;
+    case 'work-toggle':
+      workUi.open = !workUi.open; renderWork();
+      if (workUi.open) { const i = $('#logText'); if (i && window.matchMedia('(min-width: 640px)').matches) i.focus(); }
+      break;
     case 'log-slot': workUi.slot = Number(el.dataset.slot); renderWork(); { const i = $('#logText'); if (i && window.matchMedia('(min-width: 640px)').matches) i.focus(); } break;
     case 'edit-log': logSheet(id); break;
     case 'edit-project': { const p = currentProject(); projectSheet(p ? p.id : null); break; }
