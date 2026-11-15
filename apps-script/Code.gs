@@ -522,7 +522,11 @@ function rebuildWeek_(db, monday) {
       if (!(key in index)) { index[key] = projects.length; projects.push({ key: key, code: r.pcode || '', name: r.pname || '', items: [] }); }
       projects[index[key]].items.push(r);
     });
-    if (!projects.length) projects.push({ key: '', items: [] });
+    if (!projects.length) {
+      projects.push({ key: '', items: [] });
+      // выходной без записей — номер и название проекта не нужны (как в исходных таймшитах)
+      if (dayIdx >= 5) sh.getRange(TS_ROWS[1], 1, 2, 2).clearContent();
+    }
 
     // дополнительные строки проектов (9–18) очищаем и заполняем заново
     sh.getRange(TS_ROWS[1] + 2, 1, (TS_MAX_PROJECTS - 1) * 2, 3).clearContent();
