@@ -55,6 +55,37 @@ function setup() {
   // проверка доступа к переводчику и внешним запросам (чтобы Google спросил разрешения сразу)
   Logger.log('Проверка перевода: ' + LanguageApp.translate('Проверка связи', 'ru', 'en'));
   try { UrlFetchApp.fetch('https://www.google.com', { muteHttpExceptions: true }); } catch (err) {}
+  // проверка доступа к таблицам (без этого разрешения таймшит не собирается)
+  SpreadsheetApp.flush();
+  // пересобираем недели, которые раньше не получились (например, не хватало разрешений)
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) { Logger.log('Сейчас идёт синхронизация — таймшит пересоберётся при следующей'); return; }
+  try {
+    const db = readDb_(file);
+    const failed = failedWeeks_(db, 0);
+    if (!failed.length) { Logger.log('Таймшиты в порядке'); return; }
+    failed.forEach(function (monday) {
+      try {
+        const info = rebuildWeek_(db, monday);
+        Logger.log('Таймшит недели ' + monday + ': ' + (info.error ? 'ошибка — ' + info.error : info.name));
+      } catch (err) {
+        setTsRecord_(db, monday, { error: String(err && err.message || err) });
+        Logger.log('Таймшит недели ' + monday + ': ошибка — ' + (err && err.message || err));
+      }
+    });
+    writeDb_(file, db);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Недели, таймшит которых в прошлый раз не собрался (ошибка старше minAgeMs). */
+function failedWeeks_(db, minAgeMs) {
+  const now = Date.now();
+  return Object.keys(db.records).filter(function (id) {
+    const r = db.records[id];
+    return r && r.kind === 'tsfile' && r.error && r.week && !r.del && now - (Number(r.u) || 0) >= minAgeMs;
+  }).map(function (id) { return db.records[id].week; });
 }
 
 /** Пересобрать таймшит текущей недели вручную (из редактора скрипта). */
@@ -165,7 +196,8 @@ function handle_(req) {
       }
     });
 
-    // 4. Таймшит: пересобираем затронутые недели
+    // 4. Таймшит: пересобираем затронутые недели и те, что раньше не получились (не чаще раза в минуту)
+    failedWeeks_(db, 60000).forEach(function (monday) { weeks[monday] = true; });
     Object.keys(weeks).forEach(function (monday) {
       try { rebuildWeek_(db, monday); } catch (err) { setTsRecord_(db, monday, { error: String(err && err.message || err) }); }
       changed = true;

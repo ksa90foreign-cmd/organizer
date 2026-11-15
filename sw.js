@@ -1,6 +1,6 @@
 /* Органайзер — service worker: работа без интернета.
    При обновлении index.html увеличьте номер версии ниже. */
-const VERSION = 'organizer-v16';
+const VERSION = 'organizer-v17';
 const SHELL = [
   './',
   'index.html',

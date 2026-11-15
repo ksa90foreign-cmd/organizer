@@ -988,6 +988,11 @@ function logRow(l) {
         (l.en ? '<span class="en">' + esc(l.en) + '</span>' : '<span class="en wait">' + (configured() ? 'перевод появится после синхронизации' : 'перевод — после подключения Google Диска') + '</span>') +
       '</div></div></div>';
 }
+function tsErrorText(err) {
+  if (/разрешени|permission|authoriz/i.test(err))
+    return 'Таблица не обновилась: скрипту Google не хватает разрешений. Откройте script.google.com → ваш проект, выберите функцию setup → «Выполнить» и нажмите «Разрешить». Записи никуда не денутся — таблица соберётся сама.';
+  return 'Таблица не обновилась: ' + esc(err) + '. Попробую ещё раз при следующей синхронизации.';
+}
 function renderWork() {
   const open = !!workUi.open;
   $('#work').classList.toggle('closed', !open);
@@ -1031,7 +1036,7 @@ function renderWork() {
   });
   const wkNum = Math.ceil(parseYmdLocal(mon).getDate() / 7);
   $('#logList').innerHTML = html
-    ? html + (ts && ts.error ? '<p class="hint" style="color:var(--danger);margin-top:8px">Таблица не обновилась: ' + esc(ts.error) + '</p>' : '')
+    ? html + (ts && ts.error ? '<p class="hint" style="color:var(--danger);margin-top:8px">' + tsErrorText(ts.error) + '</p>' : '')
     : '<div class="empty">За эту неделю (wk' + wkNum + ') записей нет. Выберите половину дня и напишите, что сделали: запись переведётся на английский и попадёт в таймшит недели.</div>';
 }
 function projectSheet(id) {
