@@ -42,6 +42,8 @@ const ID_RE = /^[A-Za-z0-9_\-.~:@+]{1,200}$/;
 
 /** Однократная настройка: создаёт ключ доступа и файл данных. Повторный запуск ключ не меняет. */
 function setup() {
+  // Google может выдать разрешения не все (галочки на экране согласия) — просим недостающие
+  try { ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL); } catch (err) {}
   const props = PropertiesService.getScriptProperties();
   let key = props.getProperty('SECRET');
   if (!key) {
@@ -56,7 +58,19 @@ function setup() {
   Logger.log('Проверка перевода: ' + LanguageApp.translate('Проверка связи', 'ru', 'en'));
   try { UrlFetchApp.fetch('https://www.google.com', { muteHttpExceptions: true }); } catch (err) {}
   // проверка доступа к таблицам (без этого разрешения таймшит не собирается)
-  SpreadsheetApp.flush();
+  const tpl = findSheet_(null, TS_TEMPLATE);
+  if (!tpl) {
+    Logger.log('Таблица-образец «' + TS_TEMPLATE + '» не найдена — таймшит собрать не получится');
+  } else {
+    try {
+      SpreadsheetApp.openById(tpl.getId());
+      Logger.log('Доступ к Google Таблицам: есть');
+    } catch (err) {
+      Logger.log('НЕТ ДОСТУПА К GOOGLE ТАБЛИЦАМ: ' + (err && err.message || err));
+      Logger.log('Запустите setup ещё раз и на экране Google отметьте ВСЕ галочки (или «Выбрать все»).');
+      return;
+    }
+  }
   // пересобираем недели, которые раньше не получились (например, не хватало разрешений)
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(25000)) { Logger.log('Сейчас идёт синхронизация — таймшит пересоберётся при следующей'); return; }
