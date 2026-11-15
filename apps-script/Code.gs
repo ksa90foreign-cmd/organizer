@@ -14,6 +14,10 @@
  * и присылает его сюда (action: "ocr"); скрипт находит на нём названия
  * ваших счетов и обновляет суммы.
  *
+ * Таймшит: записи «Работа» из приложения переводятся на английский
+ * (LanguageApp) и вписываются в таблицу недели в папке «Органайзер/Таймшиты»
+ * по образцу таблицы Timesheet_template; рядом сохраняется .xlsx.
+ *
  * Первый запуск: выберите функцию setup и нажмите «Выполнить».
  * В журнале появится ключ доступа — его нужно вставить в приложение.
  */
@@ -22,7 +26,16 @@ const FOLDER_NAME = 'Органайзер';
 const FILE_NAME = 'organizer-data.json';
 const INBOX_PREFIX = 'organizer-inbox';
 const TOMBSTONE_TTL_DAYS = 180; // сколько дней помнить об удалённых записях
-const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx'];
+const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx', 'log'];
+
+// --- Таймшит ---
+const TS_FOLDER = 'Таймшиты';               // папка внутри «Органайзер»
+const TS_TEMPLATE = 'Timesheet_template';   // таблица-образец (Google Таблица)
+const TS_USER = 'Sergey Korobkov';          // как в названии файла
+const TS_SLOTS = { 1: '9:00-13:00', 2: '13:30-17:30' };
+const TS_ROWS = { 1: 7, 2: 8 };             // строки утра и дня, текст в столбце C
+const DAYS_EN = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const MONTHS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const ID_RE = /^[A-Za-z0-9_\-.~:@+]{1,200}$/;
 
 /** Однократная настройка: создаёт ключ доступа и файл данных. Повторный запуск ключ не меняет. */
@@ -37,6 +50,26 @@ function setup() {
   Logger.log('Файл данных: ' + file.getUrl());
   Logger.log('Владелец: ' + Session.getEffectiveUser().getEmail());
   Logger.log('КЛЮЧ ДОСТУПА (вставьте в приложение): ' + key);
+  // проверка доступа к переводчику и внешним запросам (чтобы Google спросил разрешения сразу)
+  Logger.log('Проверка перевода: ' + LanguageApp.translate('Проверка связи', 'ru', 'en'));
+  try { UrlFetchApp.fetch('https://www.google.com', { muteHttpExceptions: true }); } catch (err) {}
+}
+
+/** Пересобрать таймшит текущей недели вручную (из редактора скрипта). */
+function rebuildCurrentWeek() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) { Logger.log('Занято, попробуйте ещё раз'); return; }
+  try {
+    const file = getDataFile_();
+    const db = readDb_(file);
+    const now = new Date();
+    const ymd = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    const info = rebuildWeek_(db, mondayYmd_(ymd));
+    writeDb_(file, db);
+    Logger.log(JSON.stringify(info));
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /** Сменить ключ доступа (если ссылка с ключом попала к посторонним). */
@@ -92,9 +125,11 @@ function handle_(req) {
     const db = readDb_(file);
     let changed = false;
 
+    const weeks = {}; // недели таймшита, которые нужно пересобрать
+
     // 1. Входящие файлы
     try {
-      if (applyInbox_(db) > 0) changed = true;
+      if (applyInbox_(db, weeks) > 0) changed = true;
     } catch (err) {
       // входящие не должны ломать синхронизацию
     }
@@ -107,6 +142,7 @@ function handle_(req) {
       if (!r || typeof r.id !== 'string' || !r.id || r.id.length > 200) return;
       const ex = db.records[r.id];
       if (!ex || (Number(r.u) || 0) > (Number(ex.u) || 0)) {
+        if (r.kind === 'log') prepareLog_(r, ex, weeks);
         db.rev += 1;
         r.rv = db.rev;
         db.records[r.id] = r;
@@ -125,6 +161,12 @@ function handle_(req) {
         delete db.records[id];
         changed = true;
       }
+    });
+
+    // 4. Таймшит: пересобираем затронутые недели
+    Object.keys(weeks).forEach(function (monday) {
+      try { rebuildWeek_(db, monday); } catch (err) { setTsRecord_(db, monday, { error: String(err && err.message || err) }); }
+      changed = true;
     });
 
     if (changed) writeDb_(file, db);
@@ -150,7 +192,8 @@ function handle_(req) {
  *   }
  * Возвращает число внесённых изменений.
  */
-function applyInbox_(db) {
+function applyInbox_(db, weeks) {
+  weeks = weeks || {};
   const me = Session.getEffectiveUser().getEmail();
   const it = DriveApp.searchFiles("title contains '" + INBOX_PREFIX + "' and trashed = false");
   let applied = 0;
@@ -176,6 +219,7 @@ function applyInbox_(db) {
         if (!r || typeof r.id !== 'string' || !ID_RE.test(r.id) || KINDS.indexOf(r.kind) < 0) return;
         const rec = JSON.parse(JSON.stringify(r));
         rec.u = stamp(rec.id);
+        if (rec.kind === 'log') prepareLog_(rec, db.records[rec.id], weeks);
         db.rev += 1;
         rec.rv = db.rev;
         db.records[rec.id] = rec;
@@ -191,6 +235,7 @@ function applyInbox_(db) {
           rec[k] = p.set[k];
         });
         rec.u = stamp(rec.id);
+        if (rec.kind === 'log') prepareLog_(rec, ex, weeks);
         db.rev += 1;
         rec.rv = db.rev;
         db.records[rec.id] = rec;
@@ -200,7 +245,8 @@ function applyInbox_(db) {
         const ex = db.records[id];
         if (!ex || ex.del) return;
         db.rev += 1;
-        db.records[id] = { id: id, kind: ex.kind, del: true, u: stamp(id), rv: db.rev };
+        if (ex.kind === 'log' && ex.date) weeks[mondayYmd_(ex.date)] = true;
+        db.records[id] = { id: id, kind: ex.kind, del: true, date: ex.date, u: stamp(id), rv: db.rev };
         applied++;
       });
     }
@@ -312,6 +358,121 @@ function plural_(n, f) {
 function fmt_(n) {
   const s = (Math.round(n * 100) / 100).toString().split('.');
   return s[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + (s[1] ? ',' + s[1] : '');
+}
+
+/* ================= Таймшит ================= */
+
+/** Перевод записи и отметка недели (старой и новой, если дату поменяли). */
+function prepareLog_(r, ex, weeks) {
+  if (ex && ex.kind === 'log' && ex.date) weeks[mondayYmd_(ex.date)] = true;
+  if (r.del) { if (r.date) weeks[mondayYmd_(r.date)] = true; return; }
+  if (!r.date) return;
+  weeks[mondayYmd_(r.date)] = true;
+  const text = String(r.text || '').trim();
+  if (!text) { r.en = ''; r.enSrc = ''; return; }
+  if (r.enSrc === text && r.en) return;               // уже переведено
+  if (ex && ex.enSrc === text && ex.en) { r.en = ex.en; r.enSrc = text; return; }
+  if (/[а-яё]/i.test(text)) {
+    try { r.en = LanguageApp.translate(text, 'ru', 'en'); } catch (err) { r.en = ''; }
+  } else {
+    r.en = text;                                       // уже по-английски
+  }
+  r.enSrc = text;
+}
+
+function parseYmd_(ymd) {
+  const p = String(ymd).split('-').map(Number);
+  return new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+}
+function ymdOf_(d) {
+  return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
+}
+function mondayYmd_(ymd) {
+  const d = parseYmd_(ymd);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return ymdOf_(d);
+}
+
+function tsFolder_() {
+  const base = getDataFile_().getParents();
+  const parent = base.hasNext() ? base.next() : DriveApp.getRootFolder();
+  const it = parent.getFoldersByName(TS_FOLDER);
+  return it.hasNext() ? it.next() : parent.createFolder(TS_FOLDER);
+}
+
+function findSheet_(folder, name) {
+  const it = folder ? folder.getFilesByName(name) : DriveApp.getFilesByName(name);
+  while (it.hasNext()) {
+    const f = it.next();
+    if (!f.isTrashed() && f.getMimeType() === MimeType.GOOGLE_SHEETS) return f;
+  }
+  return null;
+}
+
+function setTsRecord_(db, monday, data) {
+  const id = 'ts-' + monday;
+  const ex = db.records[id] || {};
+  const rec = Object.assign({}, ex, data, { id: id, kind: 'tsfile', week: monday, updated: new Date().toISOString() });
+  if (!data.error) delete rec.error;
+  rec.u = Math.max(Date.now(), (Number(ex.u) || 0) + 1);
+  db.rev += 1;
+  rec.rv = db.rev;
+  db.records[id] = rec;
+  return rec;
+}
+
+/**
+ * Пересобирает таблицу недели (понедельник monday) по всем записям «Работа»:
+ * B2 — номер недели в месяце, B3 — дата, C7/C8 — утро/день с переводом.
+ * Затем сохраняет копию в .xlsx рядом.
+ */
+function rebuildWeek_(db, monday) {
+  const mon = parseYmd_(monday);
+  const wk = Math.ceil(mon.getUTCDate() / 7);
+  const name = 'Timesheet_wk' + wk + '_' + MONTHS_EN[mon.getUTCMonth()] + '_' + TS_USER;
+  const folder = tsFolder_();
+
+  let file = findSheet_(folder, name);
+  let fresh = false;
+  if (!file) {
+    const tpl = findSheet_(folder, TS_TEMPLATE) || findSheet_(null, TS_TEMPLATE);
+    if (!tpl) throw new Error('Не найдена таблица-образец «' + TS_TEMPLATE + '»');
+    file = tpl.makeCopy(name, folder);
+    fresh = true;
+  }
+  const ss = SpreadsheetApp.openById(file.getId());
+
+  const logs = Object.keys(db.records).map(function (id) { return db.records[id]; })
+    .filter(function (r) { return r && r.kind === 'log' && !r.del && r.date; });
+
+  ss.getSheets().forEach(function (sh) {
+    const dayIdx = DAYS_EN.indexOf(sh.getName().trim());
+    if (dayIdx < 0) return;
+    const d = new Date(mon.getTime());
+    d.setUTCDate(d.getUTCDate() + dayIdx);
+    const ymd = ymdOf_(d);
+    sh.getRange('B2').setValue(wk);
+    sh.getRange('B3').setNumberFormat('@').setValue(('0' + d.getUTCDate()).slice(-2) + '.' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '.' + d.getUTCFullYear());
+    const day = logs.filter(function (r) { return r.date === ymd; })
+      .sort(function (a, b) { return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0); });
+    [1, 2].forEach(function (slot) {
+      const texts = day.filter(function (r) { return Number(r.slot) === slot; })
+        .map(function (r) { return String(r.en || r.text || '').trim(); }).filter(Boolean);
+      sh.getRange(TS_ROWS[slot], 3).setValue(TS_SLOTS[slot] + (texts.length ? ' ' + texts.join('; ') : ''));
+    });
+    if (fresh) sh.getRange(TS_ROWS[1], 4, 2, 7).clearContent(); // часы D:J утра и дня
+  });
+  SpreadsheetApp.flush();
+
+  // копия в .xlsx (старую с тем же именем — в корзину)
+  const blob = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + file.getId() + '/export?format=xlsx', {
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
+  }).getBlob().setName(name + '.xlsx');
+  const old = folder.getFilesByName(name + '.xlsx');
+  while (old.hasNext()) old.next().setTrashed(true);
+  const xlsx = folder.createFile(blob);
+
+  return setTsRecord_(db, monday, { name: name, sheetUrl: ss.getUrl(), xlsxUrl: xlsx.getUrl(), folderUrl: folder.getUrl() });
 }
 
 function readDb_(file) {

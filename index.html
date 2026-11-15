@@ -105,10 +105,27 @@ a{color:var(--accent)}
 .layout{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
 @media (min-width:960px){
   .layout{grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);align-items:start;gap:20px}
-  .money{position:sticky;top:16px}
+  .side{position:sticky;top:16px}
   .top h1{font-size:26px}
 }
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px 10px}
+.side{display:grid;gap:16px;align-content:start;min-width:0}
+/* Работа (таймшит) */
+.log-form{display:grid;gap:8px;margin-bottom:6px}
+.log-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.log-date{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:4px 8px;font-size:14px;color:var(--muted);min-width:0}
+.log-in{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--line)}
+.log-in:focus-within{border-bottom-color:var(--accent)}
+.log-in input{flex:1;min-width:0;border:0;background:none;padding:8px 0;font-size:16px;outline:none}
+.log-in input::placeholder{color:var(--faint)}
+.log-day{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:12px 0 0}
+.log-day.today{color:var(--accent)}
+.log-row{display:flex;gap:10px;align-items:flex-start;padding:7px 0}
+.log-slot{flex:0 0 44px;text-align:center;font-family:var(--font-num);font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:1px 0;margin-top:2px}
+.log-row .txt .en{display:block;font-size:13px;color:var(--muted);margin-top:1px}
+.log-row .txt .en.wait{font-style:italic;color:var(--faint)}
+.ts-link{font-size:13px;color:var(--accent);text-decoration:none;white-space:nowrap}
+.ts-link:hover{text-decoration:underline}
 .sec-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;flex-wrap:wrap}
 .sec-h h2{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
 
@@ -291,6 +308,30 @@ select.inp{appearance:auto}
       <div class="foot-links" id="goalsFoot"></div>
     </section>
 
+    <div class="side">
+    <section class="panel work" aria-labelledby="workH">
+      <div class="sec-h">
+        <h2 id="workH">Работа</h2>
+        <div class="r" id="tsLinks"></div>
+      </div>
+      <form id="logForm" class="log-form" autocomplete="off">
+        <div class="log-top">
+          <div class="seg" role="group" aria-label="Половина дня">
+            <button type="button" data-action="log-slot" data-slot="1" id="slot1">9:00–13:00</button>
+            <button type="button" data-action="log-slot" data-slot="2" id="slot2">13:30–17:30</button>
+          </div>
+          <label class="sr" for="logDate">Дата</label>
+          <input type="date" id="logDate" class="log-date">
+        </div>
+        <div class="log-in">
+          <label class="sr" for="logText">Что сделал</label>
+          <input id="logText" placeholder="Что сделал (по-русски)" enterkeyhint="send">
+          <button type="submit" class="plus-btn" aria-label="Записать" title="Записать"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+      </form>
+      <div id="logList"></div>
+    </section>
+
     <section class="panel money" aria-labelledby="moneyH">
       <div class="sec-h">
         <h2 id="moneyH">Деньги</h2>
@@ -303,6 +344,7 @@ select.inp{appearance:auto}
       <div id="totals"></div>
       <div id="accounts"></div>
     </section>
+    </div>
   </div>
 </div>
 
@@ -318,7 +360,7 @@ select.inp{appearance:auto}
 /* ================= Справочники ================= */
 const CURRENCIES = { RUB: '₽', EUR: '€', USD: '$', TRY: '₺', CNY: '¥', GBP: '£' };
 const CUR_NAMES = { RUB: 'Рубли', EUR: 'Евро', USD: 'Доллары', TRY: 'Лиры', CNY: 'Юани', GBP: 'Фунты' };
-const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx'];
+const KINDS = ['group', 'item', 'account', 'settings', 'task', 'goal', 'tx', 'log'];
 const MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
 const WEEKDAYS = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'];
 const LS_DATA = 'organizer.data.v2';
@@ -556,11 +598,12 @@ function put(rec) {
 }
 function commit() { saveState(); render(); scheduleSync(); }
 function setRec(rec) { put(rec); commit(); }
-function delRec(id) { const ex = state.records[id]; if (!ex) return; put({ id, kind: ex.kind, del: true }); commit(); }
+function tomb(ex) { const t = { id: ex.id, kind: ex.kind, del: true }; if (ex.date) t.date = ex.date; return t; }
+function delRec(id) { const ex = state.records[id]; if (!ex) return; put(tomb(Object.assign({ id }, ex))); commit(); }
 function putMany(entries) {
   entries.forEach(([id, body]) => {
     if (body && !body.del) put(Object.assign({}, body, { id }));
-    else { const ex = state.records[id]; if (ex && !ex.del) put({ id, kind: ex.kind, del: true }); }
+    else { const ex = state.records[id]; if (ex && !ex.del) put(tomb(Object.assign({ id }, ex))); }
   });
   commit();
 }
@@ -832,6 +875,7 @@ function render() {
   $('#today').textContent = WEEKDAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS_GEN[d.getMonth()];
   $('#setupBanner').hidden = configured();
   renderGoals();
+  renderWork();
   renderMoney();
   restoreFocus(f);
 }
@@ -897,6 +941,65 @@ function renderGoals() {
     html = '<div class="empty">В работе пока ничего. Переключитесь на «Все» и нажмите кружок слева у целей на ближайшее время.</div>';
   }
   $('#groups').innerHTML = html;
+}
+
+/* ---------- Работа (таймшит) ---------- */
+const DAY_SHORT = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+const workUi = { slot: null, date: null };
+function parseYmdLocal(s) { const p = s.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); }
+function mondayOf(ymdStr) { const d = parseYmdLocal(ymdStr); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymd(d); }
+function defaultSlot() { return new Date().getHours() < 14 ? 1 : 2; }
+function logRow(l) {
+  return '<div class="swipe" data-kind="log" data-id="' + esc(l.id) + '">' + swipeAct(l.id) +
+    '<div class="log-row swipe-row" data-action="edit-log" data-id="' + esc(l.id) + '" role="button" tabindex="0">' +
+      '<span class="log-slot">' + (Number(l.slot) === 2 ? '13:30' : '9:00') + '</span>' +
+      '<div class="txt"><span class="t">' + esc(l.text) + '</span>' +
+        (l.en ? '<span class="en">' + esc(l.en) + '</span>' : '<span class="en wait">' + (configured() ? 'перевод появится после синхронизации' : 'перевод — после подключения Google Диска') + '</span>') +
+      '</div></div></div>';
+}
+function renderWork() {
+  if (!workUi.date) workUi.date = ymd();
+  if (!workUi.slot) workUi.slot = defaultSlot();
+  const di = $('#logDate');
+  if (di && document.activeElement !== di) di.value = workUi.date;
+  $('#slot1').classList.toggle('on', workUi.slot === 1);
+  $('#slot2').classList.toggle('on', workUi.slot === 2);
+  $('#slot1').setAttribute('aria-pressed', workUi.slot === 1);
+  $('#slot2').setAttribute('aria-pressed', workUi.slot === 2);
+
+  const mon = mondayOf(workUi.date);
+  const days = [];
+  for (let i = 0; i < 7; i++) { const d = parseYmdLocal(mon); d.setDate(d.getDate() + i); days.push(ymd(d)); }
+  const logs = live('log').filter(l => l.date >= days[0] && l.date <= days[6]);
+  const ts = getRec('ts-' + mon);
+  $('#tsLinks').innerHTML = ts && ts.sheetUrl
+    ? '<a class="ts-link" href="' + esc(ts.sheetUrl) + '" target="_blank" rel="noopener">Таблица</a>' + (ts.xlsxUrl ? ' · <a class="ts-link" href="' + esc(ts.xlsxUrl) + '" target="_blank" rel="noopener">xlsx</a>' : '')
+    : (ts && ts.error ? '<span class="hint" style="color:var(--danger)" title="' + esc(ts.error) + '">таблица: ошибка</span>' : '');
+  const t = ymd();
+  let html = '';
+  days.forEach(dayStr => {
+    const items = logs.filter(l => l.date === dayStr).sort((a, b) => (Number(a.slot) - Number(b.slot)) || ((a.createdAt || 0) - (b.createdAt || 0)));
+    if (!items.length) return;
+    const d = parseYmdLocal(dayStr);
+    html += '<div class="log-day' + (dayStr === t ? ' today' : '') + '">' + DAY_SHORT[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS_GEN[d.getMonth()] + (dayStr === t ? ' · сегодня' : '') + '</div>' +
+      items.map(logRow).join('');
+  });
+  const wkNum = Math.ceil(parseYmdLocal(mon).getDate() / 7);
+  $('#logList').innerHTML = html
+    ? html + (ts && ts.error ? '<p class="hint" style="color:var(--danger);margin-top:8px">Таблица не обновилась: ' + esc(ts.error) + '</p>' : '')
+    : '<div class="empty">За эту неделю (wk' + wkNum + ') записей нет. Выберите половину дня и напишите, что сделали: запись переведётся на английский и попадёт в таймшит недели.</div>';
+}
+function logSheet(id) {
+  const l = getRec(id); if (!l) return;
+  openSheet('log',
+    '<h2>Запись в отчёт</h2>' +
+    '<form class="form" id="fLog" data-id="' + esc(id) + '" autocomplete="off">' +
+      '<label>Что сделал<textarea class="inp" id="fLogText" rows="3">' + esc(l.text) + '</textarea></label>' +
+      (l.en ? '<p class="hint">По-английски: ' + esc(l.en) + '</p>' : '') +
+      '<div class="row2"><label>Дата<input class="inp" type="date" id="fLogDate" value="' + esc(l.date) + '"></label>' +
+      '<label>Время<select class="inp" id="fLogSlot"><option value="1"' + (Number(l.slot) === 1 ? ' selected' : '') + '>9:00–13:00</option><option value="2"' + (Number(l.slot) === 2 ? ' selected' : '') + '>13:30–17:30</option></select></label></div>' +
+      actionsHtml('delete-log', id) +
+    '</form>', '#fLogText');
 }
 
 function renderMoney() {
@@ -1375,10 +1478,14 @@ document.addEventListener('click', e => {
       closeSwipe();
       if (!r) break;
       if (r.kind === 'item') archiveItem(id);
+      else if (r.kind === 'log') withUndo([id], 'Запись удалена', () => delRec(id));
       else withUndo([id], 'Счёт «' + r.name + '» удалён', () => delRec(id));
       break;
     }
     case 'toggle-focus': toggle(id, 'focus'); break;
+    case 'log-slot': workUi.slot = Number(el.dataset.slot); renderWork(); { const i = $('#logText'); if (i && window.matchMedia('(min-width: 640px)').matches) i.focus(); } break;
+    case 'edit-log': logSheet(id); break;
+    case 'delete-log': closeSheet(); withUndo([id], 'Запись удалена', () => delRec(id)); break;
     case 'open-archive': archiveSheet(); break;
     case 'restore-item': restoreItem(id); toast('Цель возвращена'); archiveSheet(); break;
     case 'purge-item': {
@@ -1555,6 +1662,25 @@ document.addEventListener('submit', e => {
     return;
   }
 
+  if (f.id === 'logForm') {
+    const inp = $('#logText');
+    const text = inp.value.trim();
+    if (!text) { inp.focus(); return; }
+    inp.value = '';
+    setRec({ id: newId('l'), kind: 'log', date: workUi.date || ymd(), slot: workUi.slot || defaultSlot(), text, createdAt: Date.now() });
+    scheduleSync(300);
+    return;
+  }
+
+  if (f.id === 'fLog') {
+    const ex = getRec(f.dataset.id); if (!ex) { closeSheet(); return; }
+    const text = $('#fLogText').value.trim(); if (!text) return;
+    const patch = { text, date: $('#fLogDate').value || ex.date, slot: Number($('#fLogSlot').value) || ex.slot };
+    closeSheet();
+    setRec(Object.assign({}, ex, patch));
+    return;
+  }
+
   if (f.id === 'fScan') {
     const now = Date.now();
     const entries = [];
@@ -1616,6 +1742,7 @@ document.addEventListener('submit', e => {
 
 document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('err')) e.target.classList.remove('err'); });
 document.addEventListener('change', e => {
+  if (e.target.id === 'logDate') { workUi.date = e.target.value || ymd(); renderWork(); return; }
   if (e.target.id === 'scanFile' && e.target.files && e.target.files[0]) { runScan(e.target.files[0]); return; }
   if (e.target.id === 'fAuto') { $('#fxAutoBox').hidden = !e.target.checked; $('#fxManualBox').hidden = e.target.checked; }
 });
@@ -1722,7 +1849,7 @@ const DRAG_SKIP = 'button, a, input, textarea, select, label, .swipe-act';
 document.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
   const box = e.target.closest('.swipe[data-kind]');
-  if (!box || e.target.closest(DRAG_SKIP)) return;
+  if (!box || box.dataset.kind === 'log' || e.target.closest(DRAG_SKIP)) return;
   mouseDown = { box, x: e.clientX, y: e.clientY };
   e.preventDefault();
 });
@@ -1760,7 +1887,7 @@ document.addEventListener('touchstart', e => {
   sw = { row, x0: t.clientX, y0: t.clientY, dx: 0, base: row === openSwipe ? -SWIPE_W : 0, decided: false, moving: false };
   // долгое нажатие — перетаскивание
   const box = row.closest('.swipe[data-kind]');
-  if (box && !e.target.closest(DRAG_SKIP) && row !== openSwipe) {
+  if (box && box.dataset.kind !== 'log' && !e.target.closest(DRAG_SKIP) && row !== openSwipe) {
     const x0 = t.clientX, y0 = t.clientY;
     pressTimer = setTimeout(() => { if (sw && !sw.decided) { sw = null; dragStart(box, x0, y0); } }, 450);
   }
