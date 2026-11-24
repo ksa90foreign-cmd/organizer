@@ -1,6 +1,6 @@
 /* Органайзер — service worker: работа без интернета.
    При обновлении index.html увеличьте номер версии ниже. */
-const VERSION = 'organizer-v19';
+const VERSION = 'organizer-v20';
 const SHELL = [
   './',
   'index.html',
@@ -37,6 +37,10 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+
+  // Отдельные страницы в подпапках (mirik/ — приглашение на день рождения) не часть органайзера:
+  // не перехватываем их и не кладём в кэш приложения
+  if (url.origin === self.location.origin && url.pathname.indexOf('/mirik/') >= 0) return;
 
   // Страница: сначала сеть (чтобы получать обновления), но не дольше NAV_TIMEOUT —
   // иначе открываем сохранённую версию, а свежая подтянется в фоне
